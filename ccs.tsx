@@ -10,9 +10,7 @@ interface Tab {
 const tabs: Tab[] = [
   {
     label: "Simplicity",
-    content: `We understand the struggles of reading through hundreds of pages of material before an exam. That’s why we created a tool that
-       transforms long and overwhelming PDFs into clean, concise, and
-       useful study material — in just seconds.`,
+    content: "Simplify your study materials with just one upload.",
     icon: (
       <svg
         className="stroke-[#c7f022]"
@@ -65,10 +63,7 @@ const tabs: Tab[] = [
   },
   {
     label: "Preparation",
-    content: `Edu Pilot makes studying easier by breaking down lecture notes,
-       research papers, and textbooks into clear, digestible parts. It
-       highlights key concepts and creates flashcards — so you can skip the
-       endless note-taking and start learning faster.`,
+    content: "AI-generated questions to prepare for any exam scenario.",
     icon: (
       <svg
         width="24px"
@@ -99,10 +94,7 @@ const tabs: Tab[] = [
   },
   {
     label: "Testing",
-    content: ` Edu Pilot makes exam prep simple. Just upload your material, and our
-       AI will generate practice questions tailored to your content — from
-       key concepts to tricky details. It's the fastest way to review, test
-       your knowledge, and build confidence before the exam.`,
+    content: "Test your understanding with interactive, tailored quizzes.",
     icon: (
       <svg
         width="24px"
@@ -143,64 +135,22 @@ function CustomList() {
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const tabRefs = useRef<(HTMLLIElement | null)[]>([]);
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const progressAnims = useRef<(gsap.core.Tween | undefined)[]>([]);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Handle tab click with timer reset
-  const handleTabClick = (index: number) => {
-    // Clear existing interval
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-
-    // Set new active index
-    setActiveIndex(index);
-
-    // Restart the interval
-    intervalRef.current = setInterval(() => {
-      setActiveIndex((prev) => (prev + 1) % tabs.length);
-    }, 5000);
-  };
 
   useEffect(() => {
-    // Initialize the interval
-    intervalRef.current = setInterval(() => {
+    const interval = setInterval(() => {
       setActiveIndex((prev) => (prev + 1) % tabs.length);
-    }, 5000);
-
-    return () => {
-      // Cleanup interval on unmount
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
+    }, 7000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
     tabRefs.current.forEach((tab, i) => {
       if (!tab) return;
-
       gsap.to(tab, {
         backgroundColor: i === activeIndex ? "#333232" : "#111",
         scale: i === activeIndex ? 1.1 : 1,
         duration: 0.5,
       });
-
-      const progress = tab.querySelector(".progress-bar") as HTMLDivElement;
-
-      if (progressAnims.current[i]) {
-        progressAnims.current[i]?.kill();
-      }
-      progressAnims.current[i] = undefined;
-
-      gsap.set(progress, { width: 0 });
-      if (i === activeIndex) {
-        progressAnims.current[i] = gsap.to(progress, {
-          width: "100%",
-          duration: 5,
-          ease: "linear",
-        });
-      }
     });
 
     if (contentRef.current) {
@@ -221,16 +171,12 @@ function CustomList() {
             ref={(el) => {
               tabRefs.current[index] = el;
             }}
-            className="text-white p-3 rounded-2xl pr-14 cursor-pointer relative overflow-hidden"
-            onClick={() => handleTabClick(index)} // Use the new handler
+            className="text-white p-3 rounded-2xl pr-14 cursor-pointer"
+            onClick={() => setActiveIndex(index)}
           >
             <div className="flex gap-3 items-center">
               {tab.icon} {tab.label}
             </div>
-            <div
-              className="absolute bottom-0 left-0 h-1 bg-[#c7f022] progress-bar"
-              style={{ width: 0 }}
-            ></div>
           </li>
         ))}
       </ul>
@@ -239,9 +185,7 @@ function CustomList() {
           <h3 className="font-black text-3xl mb-4 text-black text-left">
             {tabs[activeIndex].label}
           </h3>
-          <p className="text-black text-lg text-left">
-            {tabs[activeIndex].content}
-          </p>
+          <p className="text-black text-lg text-left">{tabs[activeIndex].content}</p>
         </div>
       </div>
     </div>
