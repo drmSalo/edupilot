@@ -42,7 +42,7 @@ function HeroSection() {
   }, []);
 
   return (
-    <section className="pt-50 min-h-screen pb-18">
+    <section className="pt-20 min-h-screen pb-18">
       <div className="flex justify-center">
         <div className="bg-[#c7f022] min-h-[700px] w-[75%] max-w-7xl rounded-xl flex flex-col items-center justify-center text-black px-4">
           <div className="flex flex-wrap gap-16 items-center justify-between">

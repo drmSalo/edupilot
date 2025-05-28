@@ -2,6 +2,7 @@ import Header from "./components/Header";
 import AboutUsSection from "./customSections/AboutUsSection";
 import ExplanationSection from "./customSections/ExplanationSection";
 import HeroSection from "./customSections/HeroSection";
+import LiteratureSection from "./customSections/LiteratureSection";
 
 function App() {
   return (
@@ -11,6 +12,7 @@ function App() {
         <HeroSection />
         <AboutUsSection />
         <ExplanationSection/>
+        <LiteratureSection/>
       </main>
     </div>
   );
