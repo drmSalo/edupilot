@@ -1,8 +1,10 @@
 import Header from "./components/Header";
 import AboutUsSection from "./customSections/AboutUsSection";
 import ExplanationSection from "./customSections/ExplanationSection";
+import FooterSection from "./customSections/FooterSection";
 import HeroSection from "./customSections/HeroSection";
 import LiteratureSection from "./customSections/LiteratureSection";
+import PricingSection from "./customSections/PricingSection";
 
 function App() {
   return (
@@ -13,6 +15,8 @@ function App() {
         <AboutUsSection />
         <ExplanationSection/>
         <LiteratureSection/>
+        <PricingSection/>
+        <FooterSection/>
       </main>
     </div>
   );
