@@ -12,10 +12,10 @@ function PricingSection() {
             
             {/* Basic Plan */}
             <div className="w-full lg:w-1/2 border border-gray-950 rounded-2xl p-8 bg-[#111] shadow-xl hover:shadow-[#fff]/30 transition">
-              <h3 className="text-2xl font-semibold text-white mb-4">Basic – 5 €/month</h3>
+              <h3 className="text-2xl font-semibold text-white mb-4">Basic – 5 €/mo</h3>
               <ul className="space-y-3 text-lg text-gray-300 mb-6 mt-30">
                 <li className="flex items-start gap-2">
-                  <img src={img} className="w-5 h-5 mt-1" /> 40 PDF analyses per month
+                  <img src={img} className="w-5 h-5 mt-1" /> 5 PDF analyses per month
                 </li>
                 <li className="flex items-start gap-2">
                   <img src={img} className="w-5 h-5 mt-1" /> Smart summaries
@@ -37,7 +37,7 @@ function PricingSection() {
   
             {/* Pro Plan */}
             <div className="w-full lg:w-1/2 border border-[#c7f022] border-dashed rounded-2xl p-8 bg-[#1a1a1a] shadow-xl hover:shadow-[#c7f022]/40 transition">
-              <h3 className="text-2xl font-semibold text-[#c7f022] mb-4">Pro – 10 €/month</h3>
+              <h3 className="text-2xl font-semibold text-[#c7f022] mb-4">Pro – 13 €/mo</h3>
               <ul className="space-y-3 text-lg text-gray-300 mb-6 mt-30">
                 <li className="flex items-start gap-2">
                   <img src={img} className="w-5 h-5 mt-1" /> 100 PDF analyses per month

@@ -13,47 +13,39 @@ function ExplanationSection() {
 
   useEffect(() => {
     const section = sectionRef.current;
-
-    gsap.fromTo(
-      leftImageRef.current,
-      { y: 400 },
-      {
-        y: -100,
+    if (!section) return;
+  
+    const ctx = gsap.context(() => {
+      // Linkes Bild: Fade-in von unten
+      gsap.from(leftImageRef.current, {
+        y: 100,
+        opacity: 0,
+        duration: 1.2,
+        ease: "power3.out",
         scrollTrigger: {
           trigger: section,
-          scrub: 1.9,
           start: "top 80%",
-          end: "bottom 20%",
         },
-      }
-    );
-
-    gsap.fromTo(
-      rightImageRef.current,
-      {
-        clipPath: "polygon(0% 0%, 0% 0%, 0% 0%, 0% 0%)",
-      },
-      {
-        clipPath: "polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)",
-        ease: "expo.out",
+      });
+  
+      // Rechtes Bild: Fade-in von unten
+      gsap.from(rightImageRef.current, {
+        y: 100,
+        opacity: 0,
+        duration: 1.2,
+        ease: "power3.out",
         scrollTrigger: {
           trigger: section,
-          start: "top center",
-          end: "bottom top",
-          scrub: true,
+          start: "top 80%",
         },
-      }
-    );
-
-    gsap.to(textRef.current, {
-      scrollTrigger: {
-        trigger: textRef.current,
-        start: "top bottom",
-        scrub: 1.9,
-      },
-      scale: 2,
-    });
+      });
+    }, section);
+  
+    return () => ctx.revert();
   }, []);
+  
+  
+  
 
   return (
     <section
@@ -69,7 +61,7 @@ function ExplanationSection() {
         <div ref={leftImageRef}>
           <img
             className="w-full max-w-md rounded-2xl"
-            src="/Einstein.png"
+            src="/ShakespeareEinstein.png"
             alt="Einstein"
           />
         </div>
@@ -83,7 +75,7 @@ function ExplanationSection() {
         <div ref={rightImageRef}>
           <img
             className="w-full max-w-md rounded-2xl"
-            src="/CyberEinstein.png"
+            src="/CyberShakespeareEinstein.png"
             alt="Cyber Einstein"
           />
         </div>
