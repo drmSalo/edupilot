@@ -1,9 +1,9 @@
 import type { CustomButtonProps } from "../types"
 
 
-function CustomButton({text, containerStyles, textStyles, btnType}: CustomButtonProps) {
+function CustomButton({text, containerStyles, textStyles, btnType, handleClick}: CustomButtonProps) {
   return (
-    <button className={containerStyles} type={btnType}>
+    <button className={containerStyles} type={btnType} onClick={handleClick}>
         <span className={textStyles}>
             {text}
         </span>

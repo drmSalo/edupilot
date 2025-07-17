@@ -3,4 +3,5 @@ export interface CustomButtonProps {
   containerStyles?: string;
   textStyles?: string;
   btnType?: any;
+  handleClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }

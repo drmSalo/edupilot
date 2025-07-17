@@ -1,5 +1,5 @@
 
-import { BrowserRouter as Router, Routes, Route, Outlet } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 
 import { useRef } from "react";
 import gsap from "gsap";
@@ -15,8 +15,9 @@ import PricingSection from "./customSections/PricingSection";
 import LoginPage from "./pages/LoginPage";
 import ProtectedRoute from "./ProtectedRoutes";
 import ProjectsPage from "./pages/ProjectsPage";
-import CreateProject from "./pages/CreateProject";
 import { useAuth } from "./context/AuthContext";
+import ProfilePage from "./pages/ProfilePage";
+import Layout from "./components/Layout";
 
 
 gsap.registerPlugin(ScrollToPlugin);
@@ -89,12 +90,13 @@ function App() {
             <Route
               element={
                 <ProtectedRoute>
-                  <Outlet />
+                  
+                  <Layout />
                 </ProtectedRoute>
               }
             >
               <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/create" element={<CreateProject />} />
+              <Route path="/profile" element={<ProfilePage/>}/>
             </Route>
           </Routes>
         </main>

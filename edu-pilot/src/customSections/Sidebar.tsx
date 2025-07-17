@@ -1,67 +1,69 @@
 import { useState } from "react";
+import { FaUser, FaHome, FaPlus, FaChevronLeft, FaChevronRight } from "react-icons/fa";
 import CustomNavLink from "../components/CustomNavLink";
+import CustomModal from "../components/CustomModal";
 
-function Sidebar() {
+interface SidebarProps {
+  isCollapsed: boolean;
+  setIsCollapsed: (val: boolean) => void;
+}
+
+function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
   const [showModal, setShowModal] = useState(false);
-  const [projectName, setProjectName] = useState("");
 
-  const handleCreate = () => {
-    if (!projectName.trim()) return;
-    console.log("Creating project:", projectName);
-    // hier kannst du speichern oder API call machen
-    setProjectName("");
-    setShowModal(false);
-  };
+  const sidebarWidth = isCollapsed ? "w-[60px]" : "w-64";
 
   return (
     <>
-      <aside className="flex flex-col justify-between bg-black text-white w-64 h-screen p-6 shadow-lg top-0 left-0 border-r border-[#c7f022]">
-        <div>
-          <h2 className="text-3xl font-bold text-[#c7f022] mb-12">Edu Pilot</h2>
-
-          <nav className="flex flex-col gap-4">
-            <CustomNavLink to="/projects">Home</CustomNavLink>
+      <aside
+        className={`fixed top-0 left-0 h-screen p-4 shadow-lg bg-black text-white border-r border-[#c7f022] z-50 transition-all duration-300 ${sidebarWidth}`}
+      >
+        <div className="flex flex-col h-full justify-between">
+          
+          <div>
+           
             <button
-              onClick={() => setShowModal(true)}
-              className="text-left text-lg font-medium transition hover:text-[#c7f022] text-white"
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className="text-[#c7f022] text-xl mb-6"
             >
-              Create Project
+              {isCollapsed ? <FaChevronRight /> : <FaChevronLeft />}
             </button>
-          </nav>
-        </div>
-        <div>Upgrade</div>
-      </aside>
+            
 
-      {showModal && (
-        <div className="fixed inset-0 bg-[#0000008f] flex items-center justify-center z-50">
-          <div className="bg-[#c7f022] text-black p-6 rounded-xl w-[90%] max-w-md">
-            <h3 className="text-xl font-bold mb-4">Create New Project</h3>
+            {/* Navigation */}
+            <nav className="flex flex-col gap-6">
+              <CustomNavLink to="/profile">
+                <div className="flex items-center gap-3">
+                  <FaUser />
+                  {!isCollapsed && <span>Profile</span>}
+                </div>
+              </CustomNavLink>
 
-            <input
-              type="text"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              className="w-full p-2 border rounded mb-4 bg-white"
-              placeholder="Project name"
-            />
+              <CustomNavLink to="/projects">
+                <div className="flex items-center gap-3">
+                  <FaHome />
+                  {!isCollapsed && <span>Home</span>}
+                </div>
+              </CustomNavLink>
 
-            <div className="flex justify-end gap-3">
               <button
-                onClick={() => setShowModal(false)}
-                className="px-4 py-2 bg-white rounded border border-black hover:text-white hover:bg-black"
+                onClick={() => setShowModal(true)}
+                className="flex items-center gap-3 text-left text-lg font-medium hover:text-[#c7f022]"
               >
-                Cancel
+                <FaPlus />
+                {!isCollapsed && <span>Create Project</span>}
               </button>
-              <button
-                onClick={handleCreate}
-                className="px-4 py-2 bg-black text-white rounded font-semibold"
-              >
-                Create
-              </button>
-            </div>
+            </nav>
+          </div>
+
+          {/* Bottom Part */}
+          <div className="text-sm text-gray-400">
+            {!isCollapsed && "Upgrade"}
           </div>
         </div>
-      )}
+      </aside>
+
+      {showModal && <CustomModal setShowModal={setShowModal} />}
     </>
   );
 }
