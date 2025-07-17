@@ -1,9 +1,18 @@
 import { useState } from "react";
-import { FcGoogle } from "react-icons/fc";
-import { FaApple } from "react-icons/fa";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+} from "firebase/auth";
+import { auth, googleProvider } from "../firebase";
+import { useNavigate } from "react-router-dom";
 import Slider from "../components/Slider";
 import CustomButton from "../components/CustomButton";
 import CustomCheckbox from "../components/CustomCheckBox";
+import { FcGoogle } from "react-icons/fc";
+import { FaApple } from "react-icons/fa";
+import { useDispatch } from "react-redux";
+import { login } from "../context/authSlice";
 
 function LoginPage() {
   const [email, setEmail] = useState("");
@@ -12,22 +21,43 @@ function LoginPage() {
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [agreeEmails, setAgreeEmails] = useState(false);
   const [triedSubmit, setTriedSubmit] = useState(false);
+  const navigate = useNavigate();
+  const dispatch = useDispatch()
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Logging in with", email, password);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      dispatch(login());
+      navigate("/projects",  { replace: true });
+    } catch (error: any) {
+      alert(error.message);
+    }
   };
 
-  const handleSignUp = (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
+
     e.preventDefault();
     setTriedSubmit(true);
-
     if (!agreeTerms) return;
 
-    console.log("Signing up with", email, password, {
-      agreeTerms,
-      agreeEmails,
-    });
+    try {
+      await createUserWithEmailAndPassword(auth, email, password);
+      dispatch(login());
+      navigate("/projects",  { replace: true });
+    } catch (error: any) {
+      alert(error.message);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+      dispatch(login());
+      navigate("/projects",  { replace: true });
+    } catch (error: any) {
+      alert(error.message);
+    }
   };
 
   return (
@@ -37,9 +67,12 @@ function LoginPage() {
           Edu Pilot
         </h1>
 
-        {/* Social Login Buttons */}
         <div className="flex flex-col gap-4 mb-8">
-          <button className="flex items-center justify-center gap-3 bg-white text-black font-semibold py-3 rounded-full hover:opacity-90 transition">
+          <button
+            className="flex items-center justify-center gap-3 bg-white text-black font-semibold py-3 rounded-full hover:opacity-90 transition"
+            onClick={handleGoogleLogin}
+            type="button"
+          >
             <FcGoogle size={24} />
             Log in with Google
           </button>
@@ -54,7 +87,6 @@ function LoginPage() {
           {isSignup ? "Or create your account" : "Or continue with email"}
         </p>
 
-        {/* Email/Password Form */}
         <form
           onSubmit={isSignup ? handleSignUp : handleLogin}
           className="flex flex-col gap-6"
@@ -64,7 +96,7 @@ function LoginPage() {
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="p-3 rounded-lg text-black bg-white focus:outline-none border-2 border-transparent focus:border-transparent focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#2b2c68] focus:ring-[conic-gradient(at top left,#c7f022,black)]"
+            className="p-3 rounded-lg text-black bg-white"
             required
           />
 
@@ -73,11 +105,10 @@ function LoginPage() {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="p-3 rounded-lg text-black bg-white focus:outline-none border-2 border-transparent focus:border-transparent focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#2b2c68] focus:ring-[conic-gradient(at top left,#c7f022,black)]"
+            className="p-3 rounded-lg text-black bg-white"
             required
           />
 
-          {/* Forgot Password only in Login Mode */}
           {!isSignup && (
             <CustomButton
               text="Forgot your password?"
@@ -87,7 +118,6 @@ function LoginPage() {
             />
           )}
 
-          {/* Sign-Up Only Options */}
           {isSignup && (
             <div className="mt-2 text-sm text-white space-y-4">
               <div>
@@ -113,7 +143,7 @@ function LoginPage() {
                 <CustomCheckbox
                   checked={agreeEmails}
                   onChange={(e) => setAgreeEmails(e.target.checked)}
-                  label="I want to receive updates, special offers, and promotional emails. I understand that I can change it at any time."
+                  label="I want to receive updates and offers."
                 />
                 {triedSubmit && !agreeEmails && (
                   <p className="text-yellow-400 mt-1 ml-8 text-xs">
@@ -124,7 +154,6 @@ function LoginPage() {
             </div>
           )}
 
-          {/* Main Submit Button */}
           <button
             type="submit"
             className="bg-[#c7f022] text-black font-bold py-3 rounded-full hover:bg-white transition mt-10"
@@ -133,7 +162,6 @@ function LoginPage() {
           </button>
         </form>
 
-        {/* Switch Mode Link */}
         <div className="text-center mt-8 text-white text-sm">
           {isSignup ? "Already have an account?" : "Don’t have an account?"}{" "}
           <button

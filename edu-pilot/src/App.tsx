@@ -1,4 +1,5 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+
+import { BrowserRouter as Router, Routes, Route, Outlet } from "react-router-dom";
 
 import { useRef } from "react";
 import gsap from "gsap";
@@ -12,6 +13,11 @@ import HeroSection from "./customSections/HeroSection";
 import LiteratureSection from "./customSections/LiteratureSection";
 import PricingSection from "./customSections/PricingSection";
 import LoginPage from "./pages/LoginPage";
+import ProtectedRoute from "./ProtectedRoutes";
+import ProjectsPage from "./pages/ProjectsPage";
+import CreateProject from "./pages/CreateProject";
+import { useAuth } from "./context/AuthContext";
+
 
 gsap.registerPlugin(ScrollToPlugin);
 
@@ -61,25 +67,41 @@ export function HomePage() {
   );
 }
 
-
-
-
-
-
 function App() {
+  const { loading } = useAuth(); // hier Zustand holen
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen text-white">
+        Loading...
+      </div>
+    );
+  }
+
   return (
     <Router>
       <div className="bg-gradient-to-br from-[#191834] from-0% via-[#2b2c68] via-30% to-[#61bdaf] to-100%">
-        
         <main>
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
+
+            <Route
+              element={
+                <ProtectedRoute>
+                  <Outlet />
+                </ProtectedRoute>
+              }
+            >
+              <Route path="/projects" element={<ProjectsPage />} />
+              <Route path="/create" element={<CreateProject />} />
+            </Route>
           </Routes>
         </main>
       </div>
     </Router>
   );
 }
+
 
 export default App;
