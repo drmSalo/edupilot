@@ -2,15 +2,14 @@ import { useEffect, useState } from "react";
 import Container from "../components/Container";
 import CustomButton from "../components/CustomButton";
 import CustomModal from "../components/CustomModal";
-import { FaFolder } from "react-icons/fa";
+import { FaFolder, FaSpinner } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
-import {
-  collection,
-  getDocs,
-} from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { useCreateProject } from "../components/hooks/useCreateProject";
+import { useDispatch, useSelector } from "react-redux";
+import { triggerRefresh } from "../context/projectSlice"; // adjust the path if needed
 
 interface Project {
   id: string;
@@ -20,13 +19,19 @@ interface Project {
 function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [loading, setLoading] = useState(true);
   const { currentUser } = useAuth();
   const navigate = useNavigate();
   const { createProject } = useCreateProject();
+  const dispatch = useDispatch();
+  const refresh = useSelector((state: any) => state.project.refresh);
 
   useEffect(() => {
     const fetchProjects = async () => {
-      if (!currentUser) return;
+      if (!currentUser) {
+        setLoading(false);
+        return;
+      }
 
       try {
         const q = collection(db, "users", currentUser.uid, "projects");
@@ -37,30 +42,29 @@ function ProjectsPage() {
         }));
         setProjects(loaded);
       } catch (err) {
-        console.error("Fehler beim Laden der Projekte:", err);
+        console.error("Error loading projects:", err);
+      } finally {
+        setLoading(false);
       }
     };
 
     fetchProjects();
-  }, [currentUser]);
+  }, [currentUser, refresh]);
 
-  const addProjectToList = (project: Project) => {
-    setProjects((prev) => [...prev, project]);
-  };
-
-  const handleCreateProject = async (name: string): Promise<{ id: string; name: string } | null> => {
+  const handleCreateProject = async (
+    name: string
+  ): Promise<{ id: string; name: string } | null> => {
     try {
       const id = await createProject(name);
       if (!id) return null;
-  
-      // Kein addProjectToList mehr → useEffect lädt sauber neu
+
+      dispatch(triggerRefresh()); // ✅ Force re-fetch after creating
       return { id, name };
     } catch (err) {
-      console.error("Fehler beim Erstellen des Projekts:", err);
+      console.error("Error creating project:", err);
       return null;
     }
   };
-  
 
   return (
     <div className="min-h-screen bg-black text-white flex">
@@ -72,7 +76,11 @@ function ProjectsPage() {
         </div>
 
         <Container>
-          {projects.length === 0 ? (
+          {loading ? (
+            <div className="flex justify-center items-center h-64">
+              <FaSpinner className="animate-spin text-3xl text-[#c7f022]" />
+            </div>
+          ) : projects.length === 0 ? (
             <div className="flex items-center justify-center h-64 flex-col">
               <p className="text-gray-400 text-xl">
                 You haven't created a Project yet...
@@ -109,7 +117,6 @@ function ProjectsPage() {
         <CustomModal
           setShowModal={setShowModal}
           onCreate={handleCreateProject}
-          addProjectToList={addProjectToList}
         />
       )}
     </div>

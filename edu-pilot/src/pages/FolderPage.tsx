@@ -1,4 +1,4 @@
-import { useParams, useNavigate, replace } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useState } from "react";
 import { uploadPDFAndExtractText } from "../utils/pdfUtils";
@@ -74,7 +74,7 @@ function FolderPage() {
         setTest(testData.questions);
       }
     } catch (err) {
-      console.error("Fehler beim Generieren:", err);
+      console.error("Generation failed:", err);
     } finally {
       setLoading(false);
     }
@@ -90,80 +90,75 @@ function FolderPage() {
       const oldDataSnap = await getDoc(oldDocRef);
       const oldData = oldDataSnap.data();
 
-      if (!oldData) throw new Error("Projekt nicht gefunden");
+      if (!oldData) throw new Error("Project not found");
 
-      // neues Dokument anlegen
       await setDoc(newDocRef, { ...oldData, name: newName.trim() });
-
-      // altes löschen
       await deleteDoc(oldDocRef);
 
       setIsRenameOpen(false);
       navigate(`/folder/${newName.trim()}`);
     } catch (err) {
-      console.error("Fehler beim Umbenennen:", err);
+      console.error("Rename failed:", err);
     }
   };
 
   const handleDelete = async () => {
     if (!currentUser || !name) return;
-  
+
     try {
-      // Alle Projekte laden und das richtige anhand des Namens finden
       const projectsSnapshot = await getDocs(collection(db, "users", currentUser.uid, "projects"));
       const matchingDoc = projectsSnapshot.docs.find(doc => doc.data().name === name);
-  
+
       if (!matchingDoc) {
-        console.warn("Projekt mit Namen nicht gefunden.");
+        console.warn("Project not found by name.");
         return;
       }
-  
+
       await deleteDoc(doc(db, "users", currentUser.uid, "projects", matchingDoc.id));
       setIsDeleteConfirmOpen(false);
-      navigate("/projects", {replace: true});
+      navigate("/projects", { replace: true });
     } catch (err) {
-      console.error("Fehler beim Löschen:", err);
+      console.error("Delete failed:", err);
     }
   };
-  
 
   return (
     <div className="min-h-screen bg-gray-900 text-white px-4 py-10 sm:px-6 lg:px-8">
       <div className="max-w-4xl mx-auto">
-        {/* Zurück zur Projekte-Seite */}
+        {/* Back to Projects */}
         <div
           className="flex items-center mb-6 space-x-3 cursor-pointer"
           onClick={() => navigate("/projects")}
         >
           <FaArrowLeft className="text-[#c7f022] text-lg hover:text-yellow-400 transition" />
-          <span className="text-white text-sm hover:underline">Zurück zu Projekte</span>
+          <span className="text-white text-sm hover:underline">Back to Projects</span>
         </div>
 
-        {/* Projektname + Aktionen */}
+        {/* Title and actions */}
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-extrabold text-[#c7f022]">
-            Projekt: {name}
+            Project: {name}
           </h1>
           <div className="space-x-2">
             <button
               onClick={() => setIsRenameOpen(true)}
               className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium"
             >
-              Umbenennen
+              Rename
             </button>
             <button
               onClick={() => setIsDeleteConfirmOpen(true)}
               className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-sm font-medium"
             >
-              Löschen
+              Delete
             </button>
           </div>
         </div>
 
-        {/* PDF Upload + Generierung */}
+        {/* PDF upload and generation */}
         <div className="mb-10 bg-gray-800 rounded-lg p-6 shadow-md">
           <label className="block text-sm font-medium mb-2 text-gray-300">
-            Lade ein PDF hoch
+            Upload a PDF
           </label>
           <input
             type="file"
@@ -172,7 +167,7 @@ function FolderPage() {
             className="block w-full text-white bg-gray-700 border border-gray-600 rounded-md px-4 py-2 mb-4 focus:outline-none focus:ring-2 focus:ring-[#c7f022]"
           />
           <CustomButton
-            text={loading ? "Wird generiert..." : "Generieren"}
+            text={loading ? "Generating..." : "Generate"}
             containerStyles="bg-[#c7f022] py-2 px-6 rounded-md text-black font-bold hover:bg-yellow-400 transition duration-200 disabled:opacity-50"
             handleClick={handleGenerate}
             disabled={loading || !pdfFile}
@@ -180,13 +175,13 @@ function FolderPage() {
         </div>
 
         {summary && (
-          <Section title="Zusammenfassung">
+          <Section title="Summary">
             <p className="leading-relaxed text-gray-200">{summary}</p>
           </Section>
         )}
 
         {userPlan === "prime" && cards && (
-          <Section title="Lernkarten">
+          <Section title="Flashcards">
             <ul className="list-disc list-inside space-y-2 text-gray-200">
               {cards.map((card, i) => (
                 <li key={i}>{card}</li>
@@ -196,7 +191,7 @@ function FolderPage() {
         )}
 
         {userPlan === "prime" && test && (
-          <Section title="Test dein Wissen">
+          <Section title="Test Yourself">
             <ul className="list-decimal list-inside space-y-2 text-gray-200">
               {test.map((q, i) => (
                 <li key={i}>{q}</li>
@@ -209,7 +204,7 @@ function FolderPage() {
         {isRenameOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
             <div className="bg-gray-800 p-6 rounded-lg w-80 shadow-lg">
-              <h2 className="text-lg font-bold text-white mb-4">Projekt umbenennen</h2>
+              <h2 className="text-lg font-bold text-white mb-4">Rename Project</h2>
               <input
                 type="text"
                 value={newName}
@@ -221,13 +216,13 @@ function FolderPage() {
                   onClick={() => setIsRenameOpen(false)}
                   className="px-4 py-2 text-sm bg-gray-600 hover:bg-gray-700 rounded"
                 >
-                  Abbrechen
+                  Cancel
                 </button>
                 <button
                   onClick={handleRename}
                   className="px-4 py-2 text-sm bg-[#c7f022] text-black font-bold rounded"
                 >
-                  Speichern
+                  Save
                 </button>
               </div>
             </div>
@@ -238,22 +233,22 @@ function FolderPage() {
         {isDeleteConfirmOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
             <div className="bg-gray-800 p-6 rounded-lg w-80 shadow-lg">
-              <h2 className="text-lg font-bold text-red-400 mb-4">Projekt wirklich löschen?</h2>
+              <h2 className="text-lg font-bold text-red-400 mb-4">Delete this project?</h2>
               <p className="text-gray-300 mb-4">
-                Diese Aktion kann nicht rückgängig gemacht werden.
+                This action cannot be undone.
               </p>
               <div className="flex justify-end space-x-2">
                 <button
                   onClick={() => setIsDeleteConfirmOpen(false)}
                   className="px-4 py-2 text-sm bg-gray-600 hover:bg-gray-700 rounded"
                 >
-                  Abbrechen
+                  Cancel
                 </button>
                 <button
                   onClick={handleDelete}
                   className="px-4 py-2 text-sm bg-red-600 hover:bg-red-700 font-bold rounded"
                 >
-                  Löschen
+                  Delete
                 </button>
               </div>
             </div>

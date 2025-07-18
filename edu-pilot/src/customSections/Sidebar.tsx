@@ -4,6 +4,8 @@ import CustomNavLink from "../components/CustomNavLink";
 import CustomModal from "../components/CustomModal";
 import { useAuth } from "../context/AuthContext";
 import { useCreateProject } from "../components/hooks/useCreateProject";
+import { useDispatch } from "react-redux";
+import { triggerRefresh } from "../context/projectSlice";
 
 interface SidebarProps {
   isCollapsed: boolean;
@@ -15,13 +17,15 @@ function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
   const { currentUser } = useAuth();
   const { createProject } = useCreateProject();
   const sidebarWidth = isCollapsed ? "w-[60px]" : "w-64";
+  const dispatch = useDispatch();
 
   const handleCreateProject = async (name: string): Promise<{ id: string; name: string } | null> => {
     if (!currentUser) return null;
   
     const id = await createProject(name);
     if (id) {
-      return { id, name }; // das erwartet CustomModal
+      dispatch(triggerRefresh()); // ⬅️ Wichtig!
+      return { id, name };
     }
     return null;
   };
