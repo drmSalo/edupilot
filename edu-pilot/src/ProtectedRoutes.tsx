@@ -1,14 +1,14 @@
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
+import type { JSX } from "react";
 
-function ProtectedRoute({ children }: { children?: React.ReactNode }) {
-  const { currentUser } = useAuth();
+const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
+  const { currentUser, loading } = useAuth();
 
-  if (!currentUser) {
-    return <Navigate to="/login" replace />;
-  }
+  if (loading) return null;
+  if (!currentUser) return <Navigate to="/login" replace />;
 
-  return <>{children || <Outlet />}</>;
-}
+  return children;
+};
 
 export default ProtectedRoute;

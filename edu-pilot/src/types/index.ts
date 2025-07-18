@@ -4,4 +4,5 @@ export interface CustomButtonProps {
   textStyles?: string;
   btnType?: any;
   handleClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  disabled?: boolean
 }

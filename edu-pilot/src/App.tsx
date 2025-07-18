@@ -1,6 +1,4 @@
-
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-
 import { useRef } from "react";
 import gsap from "gsap";
 import { ScrollToPlugin } from "gsap/ScrollToPlugin";
@@ -15,10 +13,10 @@ import PricingSection from "./customSections/PricingSection";
 import LoginPage from "./pages/LoginPage";
 import ProtectedRoute from "./ProtectedRoutes";
 import ProjectsPage from "./pages/ProjectsPage";
-import { useAuth } from "./context/AuthContext";
 import ProfilePage from "./pages/ProfilePage";
 import Layout from "./components/Layout";
-
+import FolderPage from "./pages/FolderPage"; // NEU
+import { useAuth } from "./context/AuthContext";
 
 gsap.registerPlugin(ScrollToPlugin);
 
@@ -69,7 +67,7 @@ export function HomePage() {
 }
 
 function App() {
-  const { loading } = useAuth(); // hier Zustand holen
+  const { loading } = useAuth();
 
   if (loading) {
     return (
@@ -81,7 +79,7 @@ function App() {
 
   return (
     <Router>
-      <div className="bg-gradient-to-br from-[#191834] from-0% via-[#2b2c68] via-30% to-[#61bdaf] to-100%">
+      <div className="bg-gradient-to-br from-[#191834] via-[#2b2c68] to-[#61bdaf]">
         <main>
           <Routes>
             <Route path="/" element={<HomePage />} />
@@ -90,13 +88,13 @@ function App() {
             <Route
               element={
                 <ProtectedRoute>
-                  
                   <Layout />
                 </ProtectedRoute>
               }
             >
               <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/profile" element={<ProfilePage/>}/>
+              <Route path="/projects/:name" element={<FolderPage />} /> {/* NEU */}
+              <Route path="/profile" element={<ProfilePage />} />
             </Route>
           </Routes>
         </main>
@@ -104,6 +102,5 @@ function App() {
     </Router>
   );
 }
-
 
 export default App;

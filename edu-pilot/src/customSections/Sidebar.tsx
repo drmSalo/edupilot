@@ -2,6 +2,8 @@ import { useState } from "react";
 import { FaUser, FaHome, FaPlus, FaChevronLeft, FaChevronRight } from "react-icons/fa";
 import CustomNavLink from "../components/CustomNavLink";
 import CustomModal from "../components/CustomModal";
+import { useAuth } from "../context/AuthContext";
+import { useCreateProject } from "../components/hooks/useCreateProject";
 
 interface SidebarProps {
   isCollapsed: boolean;
@@ -10,9 +12,20 @@ interface SidebarProps {
 
 function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
   const [showModal, setShowModal] = useState(false);
-
+  const { currentUser } = useAuth();
+  const { createProject } = useCreateProject();
   const sidebarWidth = isCollapsed ? "w-[60px]" : "w-64";
 
+  const handleCreateProject = async (name: string): Promise<{ id: string; name: string } | null> => {
+    if (!currentUser) return null;
+  
+    const id = await createProject(name);
+    if (id) {
+      return { id, name }; // das erwartet CustomModal
+    }
+    return null;
+  };
+  
   return (
     <>
       <aside
@@ -63,7 +76,7 @@ function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
         </div>
       </aside>
 
-      {showModal && <CustomModal setShowModal={setShowModal} />}
+      {showModal && <CustomModal setShowModal={setShowModal} onCreate={handleCreateProject}/>}
     </>
   );
 }

@@ -2,15 +2,27 @@ import { useState } from "react";
 
 interface CustomModalProps {
   setShowModal: React.Dispatch<React.SetStateAction<boolean>>;
+  onCreate: (name: string) => Promise<{ id: string; name: string } | null>;
+  addProjectToList?: (project: { id: string; name: string }) => void;
 }
 
-function CustomModal({ setShowModal}: CustomModalProps) {
+
+
+function CustomModal({ setShowModal, onCreate, addProjectToList }: CustomModalProps) {
   const [projectName, setProjectName] = useState("");
 
-  const handleCreate = (name: string) => {
+  const handleCreate = async () => {
     if (!projectName.trim()) return;
-    setProjectName(name);
+  
+    const project = await onCreate(projectName.trim());
+    if (project) {
+      addProjectToList?.(project); // optional chaining = wird nur aufgerufen, wenn vorhanden
+      setProjectName("");
+      setShowModal(false);
+    }
   };
+  
+  
 
   return (
     <div className="fixed inset-0 bg-[#0000008f] flex items-center justify-center z-50">
@@ -31,7 +43,7 @@ function CustomModal({ setShowModal}: CustomModalProps) {
             Cancel
           </button>
           <button
-            onClick={() => handleCreate}
+            onClick={handleCreate}
             className="px-4 py-2 bg-black text-white rounded font-semibold"
           >
             Create
@@ -43,3 +55,4 @@ function CustomModal({ setShowModal}: CustomModalProps) {
 }
 
 export default CustomModal;
+

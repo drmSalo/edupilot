@@ -3,16 +3,17 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  setPersistence,
+  browserLocalPersistence,
 } from "firebase/auth";
-import { auth, googleProvider } from "../firebase";
+import { auth, googleProvider, db } from "../firebase";
+import { doc, setDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import Slider from "../components/Slider";
 import CustomButton from "../components/CustomButton";
 import CustomCheckbox from "../components/CustomCheckBox";
 import { FcGoogle } from "react-icons/fc";
 import { FaApple } from "react-icons/fa";
-import { useDispatch } from "react-redux";
-import { login } from "../context/authSlice";
 
 function LoginPage() {
   const [email, setEmail] = useState("");
@@ -22,29 +23,41 @@ function LoginPage() {
   const [agreeEmails, setAgreeEmails] = useState(false);
   const [triedSubmit, setTriedSubmit] = useState(false);
   const navigate = useNavigate();
-  const dispatch = useDispatch()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      await setPersistence(auth, browserLocalPersistence);
       await signInWithEmailAndPassword(auth, email, password);
-      dispatch(login());
-      navigate("/projects",  { replace: true });
+      navigate("/projects", { replace: true });
     } catch (error: any) {
       alert(error.message);
     }
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
-
     e.preventDefault();
     setTriedSubmit(true);
     if (!agreeTerms) return;
 
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      dispatch(login());
-      navigate("/projects",  { replace: true });
+      await setPersistence(auth, browserLocalPersistence);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      // Benutzer-Dokument in Firestore anlegen
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName || "",
+        name: "",
+        surname: "",
+        age: null,
+        subscription: "basic", // Default Abo-Typ
+        projectCount: 0,
+      });
+
+      navigate("/projects", { replace: true });
     } catch (error: any) {
       alert(error.message);
     }
@@ -52,9 +65,23 @@ function LoginPage() {
 
   const handleGoogleLogin = async () => {
     try {
-      await signInWithPopup(auth, googleProvider);
-      dispatch(login());
-      navigate("/projects",  { replace: true });
+      await setPersistence(auth, browserLocalPersistence);
+      const userCredential = await signInWithPopup(auth, googleProvider);
+      const user = userCredential.user;
+
+      // Benutzer-Dokument ggf. in Firestore anlegen, falls noch nicht vorhanden
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName || "",
+        name: "",
+        surname: "",
+        age: null,
+        subscription: "basic",
+        projectCount: 0,
+      }, { merge: true });
+
+      navigate("/projects", { replace: true });
     } catch (error: any) {
       alert(error.message);
     }
@@ -115,6 +142,7 @@ function LoginPage() {
               textStyles="text-[#c7f022] hover:underline cursor-pointer text-right"
               containerStyles=""
               btnType="button"
+              handleClick={() => {}}
             />
           )}
 
@@ -126,7 +154,7 @@ function LoginPage() {
                   onChange={(e) => setAgreeTerms(e.target.checked)}
                   label={
                     <>
-                      By signing up, you agree to Studyflash's{" "}
+                      By signing up, you agree to Edu Pilot’s{" "}
                       <span className="underline">Terms of Service</span> and{" "}
                       <span className="underline">Privacy Policy</span>.
                     </>
@@ -179,7 +207,7 @@ function LoginPage() {
         </div>
       </div>
 
-      <div className="bg-[#c7f022] w-full mb-5 rounded-tr-2xl rounded-br-2xl ">
+      <div className="bg-[#c7f022] w-full mb-5 rounded-tr-2xl rounded-br-2xl">
         <Slider />
       </div>
     </div>
