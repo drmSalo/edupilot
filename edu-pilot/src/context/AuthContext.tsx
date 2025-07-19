@@ -21,12 +21,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        // Token aktiv einmal abrufen
+        await user.getIdToken(true);
+      }
       setCurrentUser(user);
       setLoading(false);
     });
     return unsub;
   }, []);
+  
 
   const logout = () => signOut(auth);
 

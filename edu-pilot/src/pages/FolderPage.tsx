@@ -4,31 +4,30 @@ import { useState, useEffect } from "react";
 import { uploadPDFAndExtractText } from "../utils/pdfUtils";
 import CustomButton from "../components/CustomButton";
 import { db } from "../firebase";
-import {
-  doc,
-  getDoc,
-  setDoc,
-  deleteDoc,
-} from "firebase/firestore";
+import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
 import { FaArrowLeft } from "react-icons/fa";
+import { useUserPlan } from "../components/hooks/useUserPlan";
+import { useDjangoToken } from "../components/hooks/useDjangoToken";
 
 function FolderPage() {
-  const { name } = useParams();
+  const { name } = useParams<{ name: string }>();
   const { currentUser } = useAuth();
   const navigate = useNavigate();
 
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+
   const [summary, setSummary] = useState<string | null>(null);
   const [cards, setCards] = useState<string[] | null>(null);
   const [test, setTest] = useState<string[] | null>(null);
   const [projectData, setProjectData] = useState<any | null>(null);
+  const [summaryPdfUrl, setSummaryPdfUrl] = useState<string | null>(null);
 
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [newName, setNewName] = useState(name || "");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
-
-  const userPlan = currentUser?.photoURL === "prime" ? "prime" : "basic";
+  const userPlan = useUserPlan();
+  const djangoToken = useDjangoToken();
 
   useEffect(() => {
     const fetchProject = async () => {
@@ -37,7 +36,14 @@ function FolderPage() {
         const projectRef = doc(db, "users", currentUser.uid, "projects", name);
         const projectSnap = await getDoc(projectRef);
         if (projectSnap.exists()) {
-          setProjectData(projectSnap.data());
+          const data = projectSnap.data();
+          setProjectData(data);
+          setSummary(data.summary);
+          setCards(data.cards);
+          setTest(data.quiz);
+          if (data.summaryPdfUrl) {
+            setSummaryPdfUrl(data.summaryPdfUrl);
+          }
         } else {
           setProjectData(null);
         }
@@ -56,17 +62,21 @@ function FolderPage() {
   };
 
   const handleGenerate = async () => {
-    if (!pdfFile || !currentUser || !name) return;
+    if (!pdfFile || !currentUser || !name || !djangoToken) {
+      alert("Missing file, user or token.");
+      return;
+    }
+  
     setLoading(true);
     try {
       const extractedText = await uploadPDFAndExtractText(pdfFile);
       const pageCount = extractedText.split(/\f|\n{3,}/).length;
-      const token = await currentUser.getIdToken();
+  
       const res = await fetch("http://localhost:8000/api/generate-project/", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${djangoToken}`,
         },
         body: JSON.stringify({
           text: extractedText,
@@ -75,12 +85,17 @@ function FolderPage() {
           page_count: pageCount,
         }),
       });
-
+  
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "AI generation failed");
-
-      const projectRef = doc(db, "users", currentUser.uid, "projects", name);
-      await setDoc(projectRef, {
+  
+      // ✅ NICHT NOCHMAL SPEICHERN – Backend hat's schon gemacht
+  
+      setSummary(data.summary);
+      setCards(data.cards);
+      setTest(data.quiz);
+      setSummaryPdfUrl(data.summary_pdf_url);
+      setProjectData({
         name,
         summary: data.summary,
         cards: data.cards,
@@ -90,14 +105,42 @@ function FolderPage() {
         isComplex: data.is_complex,
         pageCount,
         createdAt: new Date(),
+        summaryPdfUrl: data.summary_pdf_url,
+        structured: data.structured,
       });
-
-      setSummary(data.summary);
-      setCards(data.cards);
-      setTest(data.quiz);
+  
     } catch (err) {
       console.error("Generation failed:", err);
       alert("Something went wrong while generating. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+
+  const handleGenerateCards = async () => {
+    if (!projectData?.summary || !djangoToken || !currentUser || !name) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch("http://localhost:8000/api/generate-study-cards/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${djangoToken}`,
+        },
+        body: JSON.stringify({ text: projectData.summary, name }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      const ref = doc(db, "users", currentUser.uid, "projects", name!);
+      await setDoc(ref, { ...projectData, cards: data.cards }, { merge: true });
+      setCards(data.cards);
+    } catch (err) {
+      console.error("Card generation failed:", err);
+      alert("Failed to generate cards.");
     } finally {
       setLoading(false);
     }
@@ -121,14 +164,20 @@ function FolderPage() {
   };
 
   const handleDelete = async () => {
-    if (!currentUser || !name) return;
+    if (!currentUser || !name) {
+      console.error("Missing user or project name");
+      return;
+    }
     try {
       const docRef = doc(db, "users", currentUser.uid, "projects", name);
+      console.log("Attempting to delete:", docRef.path);
       await deleteDoc(docRef);
+      console.log("Successfully deleted project");
       setIsDeleteConfirmOpen(false);
       navigate("/projects", { replace: true });
     } catch (err) {
       console.error("Delete failed:", err);
+      alert("Delete failed. Check console logs.");
     }
   };
 
@@ -154,7 +203,7 @@ function FolderPage() {
           </div>
         </div>
 
-        {/* Drag-and-drop upload */}
+        {/* File Upload UI */}
         <div
           className="mb-10 bg-gray-800 rounded-lg p-6 shadow-md text-center border-2 border-dashed border-[#c7f022] cursor-pointer hover:border-yellow-400 transition"
           onDrop={(e) => {
@@ -192,7 +241,7 @@ function FolderPage() {
               if (userPlan !== "prime") {
                 navigate("/plans");
               } else {
-                alert("Study Cards already included in generation.");
+                handleGenerateCards();
               }
             }}
           />
@@ -203,15 +252,58 @@ function FolderPage() {
               if (userPlan !== "prime") {
                 navigate("/plans");
               } else {
-                alert("Test already included in generation.");
+                alert("Test generation not yet implemented.");
               }
             }}
           />
         </div>
 
-        {summary && <Section title="Summary"><p className="leading-relaxed text-gray-200">{summary}</p></Section>}
-        {userPlan === "prime" && cards && <Section title="Flashcards"><ul className="list-disc list-inside space-y-2 text-gray-200">{cards.map((card, i) => <li key={i}>{card}</li>)}</ul></Section>}
-        {userPlan === "prime" && test && <Section title="Test Yourself"><ul className="list-decimal list-inside space-y-2 text-gray-200">{test.map((q, i) => <li key={i}>{q}</li>)}</ul></Section>}
+        {/* Summary Block */}
+        {summary && (
+          <Section title="Summary">
+            <p className="leading-relaxed text-gray-200">{summary}</p>
+            {summaryPdfUrl && (
+              <div className="mt-4">
+                <a
+                  href={summaryPdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  download
+                  className="text-[#c7f022] underline hover:text-yellow-400 font-semibold"
+                >
+                  Download Summary as PDF
+                </a>
+              </div>
+            )}
+          </Section>
+        )}
+
+        {/* Structured JSON Section Rendering */}
+        {projectData?.structured?.sections && (
+          <StructuredRenderer sections={projectData.structured.sections} />
+        )}
+
+        {/* Flashcards */}
+        {userPlan === "prime" && cards && (
+          <Section title="Flashcards">
+            <ul className="list-disc list-inside space-y-2 text-gray-200">
+              {cards.map((card, i) => (
+                <li key={i}>{card}</li>
+              ))}
+            </ul>
+          </Section>
+        )}
+
+        {/* Quiz/Test */}
+        {userPlan === "prime" && test && (
+          <Section title="Test Yourself">
+            <ul className="list-decimal list-inside space-y-2 text-gray-200">
+              {test.map((q, i) => (
+                <li key={i}>{q}</li>
+              ))}
+            </ul>
+          </Section>
+        )}
 
         {/* Rename Modal */}
         {isRenameOpen && (
@@ -256,6 +348,34 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <h2 className="text-xl font-semibold text-[#c7f022] mb-4">{title}</h2>
       {children}
     </div>
+  );
+}
+
+function StructuredRenderer({ sections }: { sections: any[] }) {
+  return (
+    <>
+      {sections.map((section, idx) => (
+        <Section title={section.heading} key={idx}>
+          {section.type === "text" && (
+            <p className="leading-relaxed text-gray-200 whitespace-pre-wrap">{section.content}</p>
+          )}
+          {section.type === "list" && Array.isArray(section.content) && (
+            <ul className="list-disc list-inside space-y-2 text-gray-200">
+              {section.content.map((item: string, i: number) => (
+                <li key={i}>{item}</li>
+              ))}
+            </ul>
+          )}
+          {section.type === "quiz" && Array.isArray(section.content) && (
+            <ol className="list-decimal list-inside space-y-2 text-gray-200">
+              {section.content.map((q: string, i: number) => (
+                <li key={i}>{q}</li>
+              ))}
+            </ol>
+          )}
+        </Section>
+      ))}
+    </>
   );
 }
 

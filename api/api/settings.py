@@ -2,21 +2,47 @@ from pathlib import Path
 import os
 import firebase_admin
 from firebase_admin import credentials
+from datetime import timedelta
+
+
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Firebase Admin SDK Setup
+SECRET_KEY = 'django-insecure-riua-w2ca$pvu-n3+w4x5^@$o5q^w-lu-560&4_ml_yxo_blhq'
+DEBUG = True
+ALLOWED_HOSTS = []
+
+
+
 FIREBASE_CERT_PATH = os.path.join(BASE_DIR, "firebase_key.json")
 if not firebase_admin._apps:
     cred = credentials.Certificate(FIREBASE_CERT_PATH)
     firebase_admin.initialize_app(cred)
 
-SECRET_KEY = 'django-insecure-riua-w2ca$pvu-n3+w4x5^@$o5q^w-lu-560&4_ml_yxo_blhq'
-DEBUG = True
-ALLOWED_HOSTS = []
+# Django REST Framework config
+REST_FRAMEWORK = {
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+}
 
-# CORS Setup
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+# CORS (if frontend is separate)
 CORS_ALLOW_ALL_ORIGINS = True
+
+
+MEDIA_URL = '/media'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Installed Apps
 INSTALLED_APPS = [
@@ -48,15 +74,6 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-# Django REST Framework
-REST_FRAMEWORK = {
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
-    ],
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    ),
-}
 
 ROOT_URLCONF = 'api.urls'
 WSGI_APPLICATION = 'api.wsgi.application'
