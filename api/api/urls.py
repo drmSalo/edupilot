@@ -6,6 +6,7 @@ from api.views import firebase_authenticate  # falls api = Projektname und views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path("api/", include("projects.urls")),
 
     # Auth API
     path('api/auth/firebase/', firebase_authenticate),
