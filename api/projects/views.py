@@ -2,10 +2,11 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from .ai import call_openai, is_complex_topic
+from .ai import call_openai, generate_study_cards_json_from_summary, is_complex_topic
 from .chunking import split_into_chunks
 from firebase_admin import firestore
 from datetime import datetime
+from api.settings import db
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -25,7 +26,7 @@ def generate_project(request):
     user_ref = db.collection("users").document(uid)
     user_data = user_ref.get().to_dict() or {}
     uploads_this_month = user_data.get("monthlyUploads", 0)
-    plan = user_data.get("plan", "basic")
+    plan = user_data.get("subscription", "basic")
 
     if plan == "basic":
         if page_count > 30:
@@ -47,7 +48,7 @@ def generate_project(request):
 
     chunks = split_into_chunks(text, max_tokens=2000)
     try:
-        structured_summary, _, _, total_tokens = call_openai(chunks, model=model, plan=plan)
+        structured_summary, total_tokens = call_openai(chunks, model=model, debug=False)
     except Exception as e:
         return Response({"error": f"AI processing failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -78,61 +79,86 @@ def generate_project(request):
     })
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def generate_study_cards(request):
-    user = request.user
-    uid = user.username
-    text = request.data.get("text")
-    name = request.data.get("name")
+    uid = request.user.username
+    project_name = request.data.get("name")
+    if not uid or not project_name:
+        return Response({"error": "Missing uid or project name"}, status=400)
 
-    if not text or not name:
-        return Response({"error": "Missing 'text' or 'name'"}, status=status.HTTP_400_BAD_REQUEST)
+    user_ref = db.collection("users").document(uid)
+    user_doc = user_ref.get()
+    if not user_doc.exists:
+        return Response({"error": "User not found"}, status=404)
 
-    try:
-        chunks = split_into_chunks(text, max_tokens=2000)
-        all_cards = []
-        total_tokens = 0
+    user_data = user_doc.to_dict()
+    subscription = user_data.get("subscription", "basic")
 
-        for chunk in chunks:
-            _, cards, _, tokens = call_openai([chunk], model="gpt-4.1-mini", plan="prime")
-            all_cards.append(cards[0])
-            total_tokens += tokens
+    if subscription != "prime":
+        return Response({"error": "Only prime users can generate study cards"}, status=403)
 
-        db = firestore.client()
-        project_ref = db.collection("users").document(uid).collection("projects").document(name)
-        project_ref.update({"cards": all_cards})
+    project_ref = user_ref.collection("projects").document(project_name)
+    project_doc = project_ref.get()
+    if not project_doc.exists:
+        return Response({"error": "Project not found"}, status=404)
 
-        return Response({"cards": all_cards, "token_usage": total_tokens})
-    except Exception as e:
-        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    structured = project_doc.to_dict().get("structured")
+    if not structured:
+        return Response({"error": "No summary found"}, status=400)
+
+    flat_sections = []
+    for topic in structured:
+        flat_sections.extend(topic.get("sections", []))
+
+    model = "gpt-4.1-mini"  # Prime only
+    cards = generate_study_cards_json_from_summary(flat_sections, model=model)
+    project_ref.update({"cards": cards})
+
+    return Response({"status": "success", "cards": cards})
+
+
+
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def generate_study_quiz(request):
-    user = request.user
-    uid = user.username
-    text = request.data.get("text")
+    uid = request.user.username
     name = request.data.get("name")
+    if not name:
+        return Response({"error": "Missing 'name'"}, status=400)
 
-    if not text or not name:
-        return Response({"error": "Missing 'text' or 'name'"}, status=status.HTTP_400_BAD_REQUEST)
+    user_ref = db.collection("users").document(uid)
+    user_doc = user_ref.get()
+    if not user_doc.exists:
+        return Response({"error": "User not found"}, status=404)
 
+    user_data = user_doc.to_dict()
+    subscription = user_data.get("subscription", "basic")
+
+    if subscription != "prime":
+        return Response({"error": "Only prime users can generate quizzes"}, status=403)
+
+    project_ref = user_ref.collection("projects").document(name)
+    project_doc = project_ref.get()
+    if not project_doc.exists:
+        return Response({"error": "Project not found"}, status=404)
+
+    structured = project_doc.to_dict().get("structured")
+    if not structured:
+        return Response({"error": "No summary found"}, status=400)
+
+    flat_sections = []
+    for topic in structured:
+        flat_sections.extend(topic.get("sections", []))
+
+    from .ai import generate_quiz_from_summary
+
+    model = "gpt-4.1-mini"  # Prime only
     try:
-        chunks = split_into_chunks(text, max_tokens=2000)
-        all_quiz = []
-        total_tokens = 0
-
-        for chunk in chunks:
-            _, _, quiz, tokens = call_openai([chunk], model="gpt-4.1-mini", plan="prime")
-            all_quiz.append(quiz[0])
-            total_tokens += tokens
-
-        db = firestore.client()
-        project_ref = db.collection("users").document(uid).collection("projects").document(name)
-        project_ref.update({"quiz": all_quiz})
-
-        return Response({"quiz": all_quiz, "token_usage": total_tokens})
+        quiz = generate_quiz_from_summary(flat_sections, model=model)
+        project_ref.update({"quiz": quiz})
+        return Response({"quiz": quiz})
     except Exception as e:
-        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"error": str(e)}, status=500)

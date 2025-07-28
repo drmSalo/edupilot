@@ -18,6 +18,9 @@ import Layout from "./components/Layout";
 import FolderPage from "./pages/FolderPage"; // NEU
 import { useAuth } from "./context/AuthContext";
 import PlansPage from "./pages/PlansPage";
+import SummaryPage from "./pages/SummaryPage";
+import CardsPage from "./pages/CardsPage";
+import TestPage from "./pages/TestPage";
 
 gsap.registerPlugin(ScrollToPlugin);
 
@@ -94,9 +97,13 @@ function App() {
               }
             >
               <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/projects/:name" element={<FolderPage />} /> {/* NEU */}
+              <Route path="/projects/:name" element={<FolderPage />} />{" "}
+              {/* NEU */}
+              <Route path="/summary/:name" element={<SummaryPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/plans" element={<PlansPage />} />
+              <Route path="/cards/:name" element={<CardsPage />} />
+              <Route path="/test/:name" element={<TestPage />} />
             </Route>
           </Routes>
         </main>
