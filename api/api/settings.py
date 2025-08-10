@@ -3,6 +3,8 @@ import os
 import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import timedelta
+from dotenv import load_dotenv
+load_dotenv()
 
 
 

@@ -1,7 +1,7 @@
 import tiktoken
 
 def split_into_chunks(text, max_tokens=2000):
-    enc = tiktoken.encoding_for_model("gpt-3.5-turbo")
+    enc = tiktoken.encoding_for_model("gpt-5-nano-2025-08-07")
     tokens = enc.encode(text)
     
     chunks = []
