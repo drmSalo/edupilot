@@ -544,9 +544,9 @@ export default function FolderPage(): JSX.Element {
             {loading ? "Generating..." : "Generate Test"}
           </ActionButton>
         </div>
-        
+
         {loading ? (
-          <div className="flex items-center justify-center py-10">
+          <div className="flex items-center justify-center py-10 flex-col">
             <svg
               className="animate-spin h-10 w-10 text-[#c7f022] drop-shadow-[0_0_8px_rgba(199,240,34,0.8)]"
               xmlns="http://www.w3.org/2000/svg"
@@ -567,6 +567,7 @@ export default function FolderPage(): JSX.Element {
                 d="M4 12a8 8 0 018-8v3.5a4.5 4.5 0 00-4.5 4.5H4z"
               ></path>
             </svg>
+            <p className="mt-3">Please don't close the tab</p>
           </div>
         ) : null}
 
