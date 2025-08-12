@@ -1,128 +1,216 @@
 # views.py
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Tuple, List, Dict, Any
+
+from django.utils.text import slugify
+from rest_framework import status, serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
 from firebase_admin import firestore
-from datetime import datetime
-from api.settings import db  # Firestore-Client aus Settings, NICHT überschreiben
+
+from api.settings import db  # Firestore Client
 
 from .ai import (
-    call_openai,
+    choose_model_for_summary,
+    call_openai_on_chunks,
     generate_study_cards_json_from_summary,
-    is_complex_topic,
     generate_quiz_from_summary,
 )
 from .chunking import split_into_chunks
 
 
-def _reset_monthly_uploads_if_needed(user_ref, user_data):
-    """Reset monthlyUploads, wenn Monatswechsel."""
-    now_month = datetime.utcnow().strftime("%Y-%m")
-    stored_month = user_data.get("monthlyUploadsMonth")
-    uploads = int(user_data.get("monthlyUploads", 0) or 0)
+# ---------------------------
+# Konstante Plan-Regeln
+# ---------------------------
+BASIC = "basic"
+PRIME = "prime"
+ALLOWED_PLANS = {BASIC, PRIME}
 
-    if stored_month != now_month:
-        # Reset
-        user_ref.update({
-            "monthlyUploads": 0,
-            "monthlyUploadsMonth": now_month,
-            "monthlyUploadsUpdatedAt": firestore.SERVER_TIMESTAMP,
-        })
-        return 0, now_month
-    return uploads, stored_month or now_month
+PLAN_RULES = {
+    BASIC: {
+        "max_pages": 30,
+        "monthly_limit": 25,
+        "default_model": "gpt-5-nano-2025-08-07",
+    },
+    PRIME: {
+        "max_pages": 80,
+        "monthly_limit": 180,
+        # dynamisch je nach Komplexität via choose_model_for_summary
+    },
+}
+
+# ---------------------------
+# Serializers
+# ---------------------------
+class GenerateProjectIn(serializers.Serializer):
+    text = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    name = serializers.CharField(allow_blank=False, trim_whitespace=True, max_length=120)
+    page_count = serializers.IntegerField(required=False, min_value=0, default=0)
 
 
+class ProjectActionIn(serializers.Serializer):
+    name = serializers.CharField(allow_blank=False, trim_whitespace=True, max_length=120)
+
+
+# ---------------------------
+# Helper
+# ---------------------------
+def _now_month_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _safe_doc_id_from_name(name: str) -> str:
+    """
+    Firestore-Dokument-ID sicher machen, aber trotzdem stabil fürs Frontend:
+    - slugify
+    - notfalls Fallback auf einfache Ersetzung
+    """
+    slug = slugify(name)
+    if not slug:
+        slug = name.strip().replace(" ", "-").replace("/", "-")
+    return slug[:120]
+
+
+def _get_user_subscription(user_data: Dict[str, Any]) -> str:
+    plan = (user_data.get("subscription") or BASIC).lower().strip()
+    return plan if plan in ALLOWED_PLANS else BASIC
+
+
+from firebase_admin import firestore
+
+def _enforce_limits_and_increment(uid: str, page_count: int):
+    user_ref = db.collection("users").document(uid)
+
+    @firestore.transactional
+    def _txn(transaction, user_ref, page_count):
+        # READ innerhalb der TX – wichtig: ref.get(transaction=transaction)
+        snap = user_ref.get(transaction=transaction)
+        user_data = snap.to_dict() or {}
+
+        plan = _get_user_subscription(user_data)
+        rules = PLAN_RULES[plan]
+
+        # Seitenlimit
+        if page_count > rules["max_pages"]:
+            raise ValueError(f"{plan.capitalize()} plan allows max {rules['max_pages']} pages per PDF.")
+
+        # Monatslogik
+        now_month = _now_month_str()
+        stored_month = (user_data.get("monthlyUploadsMonth") or "").strip()
+        uploads = int(user_data.get("monthlyUploads", 0) or 0)
+
+        if stored_month != now_month:
+            uploads = 0
+            user_data["monthlyUploads"] = 0
+            user_data["monthlyUploadsMonth"] = now_month
+
+        # Monatslimit
+        if uploads >= rules["monthly_limit"]:
+            raise PermissionError(
+                f"Upload limit reached for {plan.capitalize()} plan ({rules['monthly_limit']} PDFs/month)."
+            )
+
+        uploads_after = uploads + 1
+        user_data["monthlyUploads"] = uploads_after
+        user_data["monthlyUploadsMonth"] = now_month
+        user_data["monthlyUploadsUpdatedAt"] = firestore.SERVER_TIMESTAMP
+
+        # WRITE innerhalb der TX – wichtig: transaction.set(...)
+        transaction.set(user_ref, user_data, merge=True)
+
+        return user_data, plan, uploads_after
+
+    # So ruft man’s im Admin-Python-SDK auf:
+    transaction = db.transaction()
+    return _txn(transaction, user_ref, page_count)
+
+
+
+
+
+
+def _load_project(uid: str, project_name: str) -> Tuple[firestore.DocumentReference, Dict[str, Any]]:
+    user_ref = db.collection("users").document(uid)
+    project_id = _safe_doc_id_from_name(project_name)
+    project_ref = user_ref.collection("projects").document(project_id)
+    snap = project_ref.get()
+    return project_ref, (snap.to_dict() or {})
+
+
+def _flatten_sections(structured: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    flat: List[Dict[str, Any]] = []
+    for topic in structured or []:
+        flat.extend(topic.get("sections", []) or [])
+    return flat
+
+
+# ---------------------------
+# Endpoints
+# ---------------------------
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def generate_project(request):
     uid = request.user.username
 
-    data = request.data
-    text = (data.get("text") or "").strip()
-    name = (data.get("name") or "").strip()
-    try:
-        page_count = int(data.get("page_count") or 0)
-    except Exception:
-        page_count = 0
+    inp = GenerateProjectIn(data=request.data)
+    if not inp.is_valid():
+        return Response({"error": inp.errors}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    text = inp.validated_data["text"].strip()
+    name = inp.validated_data["name"].strip()
+    page_count = int(inp.validated_data.get("page_count", 0) or 0)
 
     if not text or not name:
         return Response({"error": "Missing fields"}, status=status.HTTP_400_BAD_REQUEST)
 
-    # User laden
-    user_ref = db.collection("users").document(uid)
-    user_doc = user_ref.get()
-    user_data = user_doc.to_dict() or {}
+    # Quoten + Monatswechsel atomisch
+    try:
+        user_after, plan, _uploads = _enforce_limits_and_increment(uid, page_count)
+    except ValueError as ve:
+        return Response({"error": str(ve)}, status=status.HTTP_400_BAD_REQUEST)
+    except PermissionError as pe:
+        return Response({"error": str(pe)}, status=status.HTTP_403_FORBIDDEN)
+    except Exception as e:
+        return Response({"error": f"Quota transaction failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    # Monatszähler ggf. resetten
-    uploads_this_month, current_month = _reset_monthly_uploads_if_needed(user_ref, user_data)
-
-    plan = (user_data.get("subscription") or "basic").lower().strip()
-    if plan not in ("basic", "prime"):
-        plan = "basic"
-
-    # Plan-Regeln
-    if plan == "basic":
-        if page_count > 30:
-            return Response({"error": "Basic plan allows max 30 pages per PDF."}, status=status.HTTP_400_BAD_REQUEST)
-        if uploads_this_month >= 25:
-            return Response({"error": "Upload limit reached for Basic plan (25 PDFs/month)."}, status=status.HTTP_403_FORBIDDEN)
-        model = "gpt-5-nano-2025-08-07"
-        is_complex = False
-    else:
-        if page_count > 80:
-            return Response({"error": "Prime plan allows max 80 pages per PDF."}, status=status.HTTP_400_BAD_REQUEST)
-        if uploads_this_month >= 180:
-            return Response({"error": "Upload limit reached for Prime plan (180 PDFs/month)."}, status=status.HTTP_403_FORBIDDEN)
-        try:
-            is_complex = is_complex_topic(text)
-        except Exception as e:
-            return Response({"error": f"Complexity check failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        model = "gpt-5-mini-2025-08-07" if is_complex or page_count > 8 else "gpt-5-nano-2025-08-07"
+    # Modellwahl
+    model = choose_model_for_summary(plan=plan, text=text, page_count=page_count)
 
     # Chunking + OpenAI
-    chunks = split_into_chunks(text, max_tokens=2000)
+    chunks = split_into_chunks(text, max_tokens=2000, model_hint=model)
     try:
-        structured_summary, total_tokens = call_openai(chunks, model=model, debug=False)
+        structured_summary, total_tokens = call_openai_on_chunks(chunks, model=model, debug=False)
     except Exception as e:
-        return Response({"error": f"AI processing failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Rollback der Upload-Erhöhung ist hier i.d.R. nicht notwendig/üblich. Wir loggen nur sauber.
+        return Response({"error": f"AI processing failed: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
 
-    # Uploadzähler + Monat aktualisieren
-    user_ref.set(
-        {
-            "monthlyUploads": uploads_this_month + 1,
-            "monthlyUploadsMonth": current_month,
-            "monthlyUploadsUpdatedAt": firestore.SERVER_TIMESTAMP,
-        },
-        merge=True,
-    )
-
-    # Projekt-Dokument
-    project_ref = user_ref.collection("projects").document(name)
-    existing = project_ref.get()
-    if existing.exists and existing.to_dict().get("initialized") is True:
-        return Response({"error": "Project already initialized"}, status=status.HTTP_400_BAD_REQUEST)
+    # Projekt anlegen (ID aus Name stabilisiert)
+    project_ref, existing = _load_project(uid, name)
+    if existing.get("initialized") is True:
+        return Response({"error": "Project already initialized"}, status=status.HTTP_409_CONFLICT)
 
     project_data = {
-        "name": name,
-        "structured": structured_summary,  # Array von Topics (mit sections)
+        "name": name,  # Originalname für Anzeige
+        "structured": structured_summary,  # Liste von Topics
         "modelUsed": model,
         "tokenUsage": int(total_tokens or 0),
-        "isComplex": bool(is_complex),
+        "isComplex": bool(model.endswith("mini-2025-08-07")),  # Proxy für Komplexität
         "pageCount": int(page_count or 0),
         "createdAt": firestore.SERVER_TIMESTAMP,
         "initialized": True,
     }
     project_ref.set(project_data, merge=True)
 
-    # Response: Frontend-kompatibel + stabil
+    # Frontend-kompatible Response
     return Response(
         {
             "structured": structured_summary,
             "model_used": model,
             "token_usage": int(total_tokens or 0),
-            "is_complex": bool(is_complex),
-            # Felder, die das Frontend früher erwartete – als None zurückgeben, um Brüche zu vermeiden
+            "is_complex": bool(project_data["isComplex"]),
             "summary": None,
             "cards": None,
             "quiz": None,
@@ -136,39 +224,37 @@ def generate_project(request):
 @permission_classes([IsAuthenticated])
 def generate_study_cards(request):
     uid = request.user.username
-    project_name = (request.data.get("name") or "").strip()
-    if not uid or not project_name:
-        return Response({"error": "Missing uid or project name"}, status=status.HTTP_400_BAD_REQUEST)
 
+    inp = ProjectActionIn(data=request.data)
+    if not inp.is_valid():
+        return Response({"error": inp.errors}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    project_name = inp.validated_data["name"].strip()
     user_ref = db.collection("users").document(uid)
     user_doc = user_ref.get()
     if not user_doc.exists:
         return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    user_data = user_doc.to_dict() or {}
-    subscription = (user_data.get("subscription") or "basic").lower().strip()
-
-    if subscription != "prime":
+    plan = _get_user_subscription(user_doc.to_dict() or {})
+    if plan != PRIME:
         return Response({"error": "Only prime users can generate study cards"}, status=status.HTTP_403_FORBIDDEN)
 
-    project_ref = user_ref.collection("projects").document(project_name)
-    project_doc = project_ref.get()
-    if not project_doc.exists:
+    project_ref, project = _load_project(uid, project_name)
+    if not project:
         return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    structured = (project_doc.to_dict() or {}).get("structured")
+    structured = project.get("structured")
     if not structured:
         return Response({"error": "No summary found"}, status=status.HTTP_400_BAD_REQUEST)
 
-    flat_sections = []
-    for topic in structured:
-        flat_sections.extend(topic.get("sections", []) or [])
+    flat_sections = _flatten_sections(structured)
 
-    model = "gpt-5-mini-2025-08-07"  # Prime only
     try:
+        # Prime → mini
+        model = "gpt-5-mini-2025-08-07"
         cards = generate_study_cards_json_from_summary(flat_sections, model=model)
     except Exception as e:
-        return Response({"error": f"Card generation failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"error": f"Card generation failed: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
 
     project_ref.update({"cards": cards})
     return Response({"status": "success", "cards": cards}, status=status.HTTP_200_OK)
@@ -178,39 +264,36 @@ def generate_study_cards(request):
 @permission_classes([IsAuthenticated])
 def generate_study_quiz(request):
     uid = request.user.username
-    name = (request.data.get("name") or "").strip()
-    if not name:
-        return Response({"error": "Missing 'name'"}, status=status.HTTP_400_BAD_REQUEST)
 
+    inp = ProjectActionIn(data=request.data)
+    if not inp.is_valid():
+        return Response({"error": inp.errors}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    project_name = inp.validated_data["name"].strip()
     user_ref = db.collection("users").document(uid)
     user_doc = user_ref.get()
     if not user_doc.exists:
         return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    user_data = user_doc.to_dict() or {}
-    subscription = (user_data.get("subscription") or "basic").lower().strip()
-
-    if subscription != "prime":
+    plan = _get_user_subscription(user_doc.to_dict() or {})
+    if plan != PRIME:
         return Response({"error": "Only prime users can generate quizzes"}, status=status.HTTP_403_FORBIDDEN)
 
-    project_ref = user_ref.collection("projects").document(name)
-    project_doc = project_ref.get()
-    if not project_doc.exists:
+    project_ref, project = _load_project(uid, project_name)
+    if not project:
         return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    structured = (project_doc.to_dict() or {}).get("structured")
+    structured = project.get("structured")
     if not structured:
         return Response({"error": "No summary found"}, status=status.HTTP_400_BAD_REQUEST)
 
-    flat_sections = []
-    for topic in structured:
-        flat_sections.extend(topic.get("sections", []) or [])
+    flat_sections = _flatten_sections(structured)
 
-    model = "gpt-5-mini-2025-08-07"  # Prime only
     try:
+        model = "gpt-5-mini-2025-08-07"
         quiz = generate_quiz_from_summary(flat_sections, model=model)
     except Exception as e:
-        return Response({"error": f"Quiz generation failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"error": f"Quiz generation failed: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
 
     project_ref.update({"quiz": quiz})
     return Response({"quiz": quiz}, status=status.HTTP_200_OK)

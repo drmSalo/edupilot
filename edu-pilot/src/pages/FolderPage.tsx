@@ -1,84 +1,194 @@
-// FolderPage.tsx
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+} from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import { useState, useEffect } from "react";
-import { uploadPDFAndExtractText } from "../utils/pdfUtils";
-import CustomButton from "../components/CustomButton";
+import { FaArrowLeft } from "react-icons/fa";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
-import { FaArrowLeft } from "react-icons/fa";
+import { useAuth } from "../context/AuthContext";
 import { useUserPlan } from "../components/hooks/useUserPlan";
 import { useDjangoToken } from "../components/hooks/useDjangoToken";
+import { uploadPDFAndExtractText } from "../utils/pdfUtils";
 
+// NOTE: Keep palette from existing code (#c7f022, blue-600, purple-600, gray-800/900)
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
-function FolderPage() {
+// ----------------------
+// Types
+// ----------------------
+interface QuizItem {
+  question: string;
+  options: string[];
+  correct_answer: string;
+}
+
+interface CardItem {
+  question: string;
+  answer: string;
+}
+
+interface Section {
+  heading: string;
+  type: "text" | "list" | "latex";
+  content: string | string[];
+}
+
+interface Topic {
+  title: string;
+  date: string; // YYYY-MM-DD
+  sections: Section[];
+}
+
+interface ProjectDoc {
+  name: string;
+  structured?: Topic[];
+  modelUsed?: string;
+  tokenUsage?: number;
+  isComplex?: boolean;
+  pageCount?: number;
+  createdAt?: any;
+  cards?: CardItem[];
+  quiz?: QuizItem[];
+}
+
+// Safe Firestore document id mirror (aligning with backend slugify strategy)
+const safeId = (name: string) => {
+  const base = name.trim().toLowerCase();
+  const slug = base
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
+  return (slug || base.replace(/\W+/g, "-")).slice(0, 120);
+};
+
+// ----------------------
+// Component
+// ----------------------
+export default function FolderPage(): JSX.Element {
   const { name } = useParams<{ name: string }>();
-  const { currentUser } = useAuth();
   const navigate = useNavigate();
-
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const [cards, setCards] = useState<any[] | null>(null);
-  const [test, setTest] = useState<any[] | null>(null);
-  const [projectData, setProjectData] = useState<any | null>(null);
-
-  const [summaryGenerated, setSummaryGenerated] = useState(false);
-
-  const [isRenameOpen, setIsRenameOpen] = useState(false);
-  const [newName, setNewName] = useState(name || "");
-  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const { currentUser } = useAuth();
 
   const userPlan = useUserPlan();
   const djangoToken = useDjangoToken();
 
-  useEffect(() => {
-    const fetchProject = async () => {
-      if (!currentUser || !name) return;
-      try {
-        const projectRef = doc(db, "users", currentUser.uid, "projects", name);
-        const projectSnap = await getDoc(projectRef);
-        if (projectSnap.exists()) {
-          const data = projectSnap.data();
-          setProjectData(data);
-          setCards((data as any).cards || null);
-          setTest((data as any).quiz || null);
-          setSummaryGenerated(Boolean((data as any).structured && (data as any).structured.length));
-        } else {
-          setProjectData(null);
-          setCards(null);
-          setTest(null);
-          setSummaryGenerated(false);
-        }
-      } catch (err) {
-        console.error("Error loading project:", err);
-      }
-    };
-    fetchProject();
-  }, [currentUser, name]);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [project, setProject] = useState<ProjectDoc | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [summaryGenerated, setSummaryGenerated] = useState(false);
+  const [cards, setCards] = useState<CardItem[] | null>(null);
+  const [quiz, setQuiz] = useState<QuizItem[] | null>(null);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type === "application/pdf") {
-      setPdfFile(file);
-    }
+  // Modals
+  const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const [newName, setNewName] = useState<string>(name || "");
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+
+  // Notifications (simple inline – no external lib required)
+  const [notice, setNotice] = useState<string | null>(null);
+  const clearNotice = () => setNotice(null);
+
+  // Abort controller for fetches
+  const abortRef = useRef<AbortController | null>(null);
+  const cancelOngoing = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
   };
 
-  const handleGenerate = async () => {
-    if (!pdfFile || !currentUser || !name || !djangoToken) {
-      alert("Missing file, user or token.");
+  const projectId = useMemo(() => (name ? safeId(name) : ""), [name]);
+
+  const canGenerate = useMemo(
+    () => Boolean(pdfFile && currentUser && name && djangoToken),
+    [pdfFile, currentUser, name, djangoToken]
+  );
+
+  // Load project
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      if (!currentUser || !name) return;
+      try {
+        const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+        const snap = await getDoc(ref);
+        if (!mounted) return;
+        if (snap.exists()) {
+          const data = snap.data() as ProjectDoc;
+          setProject(data);
+          setCards(data.cards || null);
+          setQuiz(data.quiz || null);
+          setSummaryGenerated(
+            Boolean(data.structured && data.structured.length)
+          );
+        } else {
+          setProject(null);
+          setCards(null);
+          setQuiz(null);
+          setSummaryGenerated(false);
+        }
+      } catch (e) {
+        console.error("Error loading project", e);
+        setNotice("Fehler beim Laden des Projekts.");
+      }
+    };
+    load();
+    return () => {
+      mounted = false;
+      cancelOngoing();
+    };
+  }, [currentUser, name, projectId]);
+
+  // Handlers
+  const onPickFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.type !== "application/pdf") {
+      setNotice("Bitte eine PDF-Datei auswählen.");
       return;
     }
+    setPdfFile(f);
+  }, []);
 
+  const onDropFile = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (!f) return;
+    if (f.type !== "application/pdf") {
+      setNotice("Bitte eine PDF-Datei ablegen.");
+      return;
+    }
+    setPdfFile(f);
+  }, []);
+
+  const estimatePages = (text: string): number => {
+    // Try form feed, then big gaps, fallback to rough char estimate
+    const byFF = text.split(/\f/g).length;
+    const byGaps = text.split(/\n{3,}/g).length;
+    const byChars = Math.max(1, Math.round(text.length / 3000));
+    return Math.max(1, byFF || byGaps || byChars);
+  };
+
+  const handleGenerate = useCallback(async () => {
+    if (!canGenerate) {
+      setNotice("Datei, Nutzer oder Token fehlen.");
+      return;
+    }
     setLoading(true);
+    clearNotice();
+    cancelOngoing();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      const extractedText = await uploadPDFAndExtractText(pdfFile);
-      // Stabilere grobe Heuristik für Seiten: Fallback auf 1
-      const pageCountGuess = Math.max(
-        1,
-        extractedText.split(/\f/g).length || extractedText.split(/\n{3,}/g).length || 1
-      );
+      const extractedText = await uploadPDFAndExtractText(pdfFile!);
+      const pageCountGuess = estimatePages(extractedText);
 
       const res = await fetch(`${API_BASE}/api/generate-project/`, {
         method: "POST",
@@ -91,17 +201,16 @@ function FolderPage() {
           name,
           page_count: pageCountGuess,
         }),
+        signal: controller.signal,
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "AI generation failed");
+      if (!res.ok) throw new Error(data?.error || "AI generation failed");
 
-      // Backend speichert bereits; wir holen nur die Daten für die UI
       setSummaryGenerated(true);
-      // Local UI-Zustand (falls du sofort etwas anzeigen willst)
-      setProjectData((prev: any) => ({
+      setProject((prev) => ({
         ...(prev || {}),
-        name,
+        name: name!,
         modelUsed: data.model_used,
         tokenUsage: data.token_usage,
         isComplex: data.is_complex,
@@ -109,18 +218,49 @@ function FolderPage() {
         createdAt: new Date(),
         structured: data.structured,
       }));
-    } catch (err) {
-      console.error("Generation failed:", err);
-      alert("Something went wrong while generating. Please try again.");
+
+      // Persist immediate UI state to Firestore for consistency
+      if (currentUser) {
+        const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+        await setDoc(
+          ref,
+          {
+            name: name!,
+            modelUsed: data.model_used,
+            tokenUsage: data.token_usage,
+            isComplex: data.is_complex,
+            pageCount: pageCountGuess,
+            createdAt: new Date(),
+            structured: data.structured,
+            initialized: true,
+          },
+          { merge: true }
+        );
+      }
+
+      setNotice("Zusammenfassung erstellt.");
+    } catch (err: any) {
+      console.error("Generation failed", err);
+      setNotice(err?.message || "Fehler bei der Generierung.");
     } finally {
       setLoading(false);
+      abortRef.current = null;
     }
-  };
+  }, [canGenerate, currentUser, djangoToken, name, pdfFile, projectId]);
 
-  const handleGenerateCards = async () => {
-    if (!djangoToken || !currentUser || !name) return;
+  const handleGenerateCards = useCallback(async () => {
+    if (userPlan !== "prime") {
+      navigate("/plans");
+      return;
+    }
+    if (!summaryGenerated || !currentUser || !name) return;
 
     setLoading(true);
+    clearNotice();
+    cancelOngoing();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       const res = await fetch(`${API_BASE}/api/generate-study-cards/`, {
         method: "POST",
@@ -129,26 +269,52 @@ function FolderPage() {
           Authorization: `Bearer ${djangoToken}`,
         },
         body: JSON.stringify({ name }),
+        signal: controller.signal,
       });
-
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error(data?.error || "Failed to generate cards");
 
-      const ref = doc(db, "users", currentUser.uid, "projects", name!);
-      await setDoc(ref, { ...(projectData || {}), cards: data.cards }, { merge: true });
+      if (currentUser) {
+        const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+        await setDoc(
+          ref,
+          { ...(project || {}), cards: data.cards },
+          { merge: true }
+        );
+      }
       setCards(data.cards);
-    } catch (err) {
-      console.error("Card generation failed:", err);
-      alert("Failed to generate cards.");
+      setNotice("Karten erstellt.");
+    } catch (err: any) {
+      console.error("Card generation failed", err);
+      setNotice(err?.message || "Karten konnten nicht erstellt werden.");
     } finally {
       setLoading(false);
+      abortRef.current = null;
     }
-  };
+  }, [
+    currentUser,
+    djangoToken,
+    name,
+    navigate,
+    project,
+    projectId,
+    summaryGenerated,
+    userPlan,
+  ]);
 
-  const handleGenerateTest = async () => {
-    if (!projectData?.structured || !djangoToken || !currentUser || !name) return;
+  const handleGenerateQuiz = useCallback(async () => {
+    if (userPlan !== "prime") {
+      navigate("/plans");
+      return;
+    }
+    if (!summaryGenerated || !currentUser || !name) return;
 
     setLoading(true);
+    clearNotice();
+    cancelOngoing();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       const res = await fetch(`${API_BASE}/api/generate-study-quiz/`, {
         method: "POST",
@@ -157,177 +323,317 @@ function FolderPage() {
           Authorization: `Bearer ${djangoToken}`,
         },
         body: JSON.stringify({ name }),
+        signal: controller.signal,
       });
-
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error(data?.error || "Failed to generate quiz");
 
-      const ref = doc(db, "users", currentUser.uid, "projects", name!);
-      await setDoc(ref, { ...(projectData || {}), quiz: data.quiz }, { merge: true });
-      setTest(data.quiz);
-    } catch (err) {
-      console.error("Quiz generation failed:", err);
-      alert("Failed to generate quiz.");
+      if (currentUser) {
+        const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+        await setDoc(
+          ref,
+          { ...(project || {}), quiz: data.quiz },
+          { merge: true }
+        );
+      }
+      setQuiz(data.quiz);
+      setNotice("Quiz erstellt.");
+    } catch (err: any) {
+      console.error("Quiz generation failed", err);
+      setNotice(err?.message || "Quiz konnte nicht erstellt werden.");
     } finally {
       setLoading(false);
+      abortRef.current = null;
     }
-  };
+  }, [
+    currentUser,
+    djangoToken,
+    name,
+    navigate,
+    project,
+    projectId,
+    summaryGenerated,
+    userPlan,
+  ]);
 
-  const handleRename = async () => {
+  const handleRename = useCallback(async () => {
     if (!currentUser || !name || !newName.trim()) return;
     try {
-      const oldDocRef = doc(db, "users", currentUser.uid, "projects", name);
-      const oldSnap = await getDoc(oldDocRef);
+      const oldRef = doc(db, "users", currentUser.uid, "projects", projectId);
+      const oldSnap = await getDoc(oldRef);
       if (!oldSnap.exists()) return;
-      const oldData = oldSnap.data();
-      const newDocRef = doc(db, "users", currentUser.uid, "projects", newName.trim());
-      await setDoc(newDocRef, { ...oldData, name: newName.trim() });
-      await deleteDoc(oldDocRef);
+      const oldData = oldSnap.data() as ProjectDoc;
+      const newId = safeId(newName);
+      const newRef = doc(db, "users", currentUser.uid, "projects", newId);
+      await setDoc(newRef, { ...oldData, name: newName.trim() });
+      await deleteDoc(oldRef);
       setIsRenameOpen(false);
       navigate("/projects", { replace: true });
-    } catch (err) {
-      console.error("Rename failed:", err);
+    } catch (e) {
+      console.error("Rename failed", e);
+      setNotice("Umbenennen fehlgeschlagen.");
     }
-  };
+  }, [currentUser, name, newName, navigate, projectId]);
 
-  const handleDelete = async () => {
-    if (!currentUser || !name) {
-      console.error("Missing user or project name");
-      return;
-    }
+  const handleDelete = useCallback(async () => {
+    if (!currentUser || !name) return;
     try {
-      const docRef = doc(db, "users", currentUser.uid, "projects", name);
-      await deleteDoc(docRef);
+      const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+      await deleteDoc(ref);
       setIsDeleteConfirmOpen(false);
       navigate("/projects", { replace: true });
-    } catch (err) {
-      console.error("Delete failed:", err);
-      alert("Delete failed. Check console logs.");
+    } catch (e) {
+      console.error("Delete failed", e);
+      setNotice("Löschen fehlgeschlagen.");
     }
+  }, [currentUser, name, navigate, projectId]);
+
+  // UI helpers
+  const ActionButton: React.FC<{
+    onClick: () => void;
+    disabled?: boolean;
+    children: React.ReactNode;
+    variant?: "primary" | "blue" | "purple";
+  }> = ({ onClick, disabled, children, variant = "primary" }) => {
+    const base =
+      "inline-flex items-center justify-center rounded-md px-5 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition w-full sm:w-auto";
+    const cls =
+      variant === "primary"
+        ? `${base} bg-[#c7f022] text-black hover:bg-yellow-400 focus:ring-[#c7f022] focus:ring-offset-gray-900`
+        : variant === "blue"
+        ? `${base} bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 focus:ring-offset-gray-900`
+        : `${base} bg-purple-600 text-white hover:bg-purple-700 focus:ring-purple-500 focus:ring-offset-gray-900`;
+    return (
+      <button onClick={onClick} disabled={disabled} className={cls}>
+        {children}
+      </button>
+    );
   };
 
+  // ----------------------
+  // Render
+  // ----------------------
   return (
-    <div className="min-h-screen bg-gray-900 text-white px-4 py-10 sm:px-6 lg:px-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center mb-6 space-x-3 cursor-pointer" onClick={() => navigate("/projects")}>
-          <FaArrowLeft className="text-[#c7f022] text-lg hover:text-yellow-400 transition" />
-          <span className="text-white text-sm hover:underline">Back to Projects</span>
+    <div className="min-h-screen bg-gray-900 text-white px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-5xl">
+        {/* Header */}
+        <div className="mb-6 flex items-center gap-3">
+          <button
+            onClick={() => navigate("/projects")}
+            className="inline-flex items-center gap-2 text-sm text-gray-300 hover:text-white focus:outline-none"
+            aria-label="Zurück zu Projekten"
+          >
+            <FaArrowLeft className="text-[#c7f022] text-lg" />
+            <span className="underline decoration-[#c7f022]/60 underline-offset-4">
+              Back to Projects
+            </span>
+          </button>
         </div>
 
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-extrabold text-[#c7f022]">Project: {projectData?.name || name}</h1>
-          <div className="space-x-2">
-            <button onClick={() => setIsRenameOpen(true)} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium">
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#c7f022] tracking-tight">
+            Project: {project?.name || name}
+          </h1>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setIsRenameOpen(true)}
+              className="rounded px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
               Rename
             </button>
-            <button onClick={() => setIsDeleteConfirmOpen(true)} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-sm font-medium">
+            <button
+              onClick={() => setIsDeleteConfirmOpen(true)}
+              className="rounded px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+            >
               Delete
             </button>
           </div>
         </div>
 
-        {/* File Upload UI */}
+        {/* Notice */}
+        {notice && (
+          <div className="mb-6 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
+            <div className="flex items-start justify-between gap-4">
+              <p>{notice}</p>
+              <button
+                onClick={clearNotice}
+                className="text-yellow-300/80 hover:text-yellow-100"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Upload Area */}
         <div
-          className="mb-10 bg-gray-800 rounded-lg p-6 shadow-md text-center border-2 border-dashed border-[#c7f022] cursor-pointer hover:border-yellow-400 transition"
-          onDrop={(e) => {
-            e.preventDefault();
-            const file = e.dataTransfer.files?.[0];
-            if (file && file.type === "application/pdf") setPdfFile(file);
-          }}
+          onDrop={onDropFile}
           onDragOver={(e) => e.preventDefault()}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              (
+                document.getElementById("file-upload") as HTMLInputElement
+              )?.click();
+            }
+          }}
+          className="group mb-10 rounded-xl border-2 border-dashed border-[#c7f022] p-6 text-center shadow-md outline-none transition hover:border-yellow-400 bg-gray-800/80"
+          aria-label="PDF Upload Bereich"
         >
-          <div className="flex flex-col items-center">
-            <svg className="w-12 h-12 mb-3 text-[#c7f022]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1M12 12v9m0-9L8 16m4-4l4 4M12 4v8" />
+          <div className="mx-auto flex max-w-sm flex-col items-center">
+            <svg
+              className="mb-3 h-12 w-12 text-[#c7f022]"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1M12 12v9m0-9L8 16m4-4l4 4M12 4v8"
+              />
             </svg>
-            <p className="text-sm text-gray-300 mb-2">Drag & drop your PDF here or click to select</p>
-            <input type="file" accept="application/pdf" onChange={handleFileUpload} className="hidden" id="file-upload" />
-            <label htmlFor="file-upload" className="text-sm text-[#c7f022] cursor-pointer underline">
+            <p className="mb-2 text-sm text-gray-300">
+              Drag & drop your PDF here or click to select
+            </p>
+            <input
+              id="file-upload"
+              type="file"
+              accept="application/pdf"
+              onChange={onPickFile}
+              className="hidden"
+            />
+            <label
+              htmlFor="file-upload"
+              className="cursor-pointer text-sm font-semibold text-[#c7f022] underline decoration-[#c7f022]/60 underline-offset-4"
+            >
               Browse file
             </label>
-            {pdfFile && <p className="mt-3 text-green-400 text-sm">Uploaded: {pdfFile.name}</p>}
+            {pdfFile && (
+              <p className="mt-3 truncate text-sm text-green-400">
+                Uploaded: {pdfFile.name}
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 mb-10">
+        {/* Actions */}
+        <div className="mb-10 grid grid-cols-1 gap-3 sm:auto-cols-max sm:grid-flow-col">
           {!summaryGenerated && (
-            <CustomButton
-              text={loading ? "Generating..." : "Generate Summary"}
-              containerStyles="bg-[#c7f022] py-2 px-6 rounded-md text-black font-bold hover:bg-yellow-400 transition disabled:opacity-50 w-full sm:w-auto"
-              handleClick={handleGenerate}
+            <ActionButton
+              onClick={handleGenerate}
               disabled={loading || !pdfFile}
-            />
+            >
+              {loading ? "Generating..." : "Generate Summary"}
+            </ActionButton>
           )}
-          <CustomButton
-            text={loading ? "Generating..." : "Generate Study Cards"}
-            containerStyles="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-md w-full sm:w-auto disabled:opacity-50"
-            handleClick={() => {
-              if (userPlan !== "prime") navigate("/plans");
-              else handleGenerateCards();
-            }}
+          <ActionButton
+            onClick={handleGenerateCards}
             disabled={loading || !summaryGenerated}
-          />
-          <CustomButton
-            text={loading ? "Generating..." : "Generate Test"}
-            containerStyles="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-md w-full sm:w-auto disabled:opacity-50"
-            handleClick={() => {
-              if (userPlan !== "prime") navigate("/plans");
-              else handleGenerateTest();
-            }}
+            variant="blue"
+          >
+            {loading ? "Generating..." : "Generate Study Cards"}
+          </ActionButton>
+          <ActionButton
+            onClick={handleGenerateQuiz}
             disabled={loading || !summaryGenerated}
-          />
+            variant="purple"
+          >
+            {loading ? "Generating..." : "Generate Test"}
+          </ActionButton>
         </div>
+        
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <svg
+              className="animate-spin h-10 w-10 text-[#c7f022] drop-shadow-[0_0_8px_rgba(199,240,34,0.8)]"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-30"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              ></circle>
+              <path
+                className="opacity-90"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8v3.5a4.5 4.5 0 00-4.5 4.5H4z"
+              ></path>
+            </svg>
+          </div>
+        ) : null}
 
         {/* Tiles */}
-        <div className="flex justify-center flex-row gap-5">
-          {projectData?.structured && (
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {project?.structured && (
             <div
-              className="w-full sm:w-80 p-6 rounded-2xl bg-gradient-to-br from-[#c7f022] to-black shadow-xl text-white cursor-pointer hover:opacity-90 transition"
               onClick={() => navigate(`/summary/${name}`)}
+              className="cursor-pointer rounded-2xl bg-gradient-to-br from-[#c7f022] to-black p-6 text-white shadow-xl transition hover:opacity-90"
             >
-              <h2 className="text-2xl font-bold mb-2">Summary</h2>
-              <p className="text-sm text-gray-100">Your generated summary is ready. Click to view it in full.</p>
+              <h2 className="mb-2 text-2xl font-bold">Summary</h2>
+              <p className="text-sm text-gray-100">
+                Your generated summary is ready. Click to view it in full.
+              </p>
             </div>
           )}
 
           {cards && (
             <div
-              className="w-full sm:w-80 p-6 rounded-2xl bg-gradient-to-br from-blue-600 to-black shadow-xl text-white cursor-pointer hover:opacity-90 transition"
               onClick={() => navigate(`/cards/${name}`)}
+              className="cursor-pointer rounded-2xl bg-gradient-to-br from-blue-600 to-black p-6 text-white shadow-xl transition hover:opacity-90"
             >
-              <h2 className="text-2xl font-bold mb-2">Study Cards</h2>
-              <p className="text-sm text-gray-100">Your study cards are ready. Click to view them.</p>
+              <h2 className="mb-2 text-2xl font-bold">Study Cards</h2>
+              <p className="text-sm text-gray-100">
+                Your study cards are ready. Click to view them.
+              </p>
             </div>
           )}
 
-          {test && (
+          {quiz && (
             <div
-              className="w-full sm:w-80 p-6 rounded-2xl bg-gradient-to-br from-purple-600 to-black shadow-xl text-white cursor-pointer hover:opacity-90 transition"
               onClick={() => navigate(`/test/${name}`)}
+              className="cursor-pointer rounded-2xl bg-gradient-to-br from-purple-600 to-black p-6 text-white shadow-xl transition hover:opacity-90"
             >
-              <h2 className="text-2xl font-bold mb-2">Test</h2>
-              <p className="text-sm text-gray-100">Your quiz/test is ready. Click to view it.</p>
+              <h2 className="mb-2 text-2xl font-bold">Test</h2>
+              <p className="text-sm text-gray-100">
+                Your quiz/test is ready. Click to view it.
+              </p>
             </div>
           )}
         </div>
 
-        {/* Rename Modal */}
+        {/* Modals */}
         {isRenameOpen && (
-          <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
-            <div className="bg-gray-800 p-6 rounded-lg w-80 shadow-lg">
-              <h2 className="text-lg font-bold text-white mb-4">Rename Project</h2>
+          <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
+            <div className="w-full max-w-sm rounded-lg bg-gray-800 p-6 shadow-lg">
+              <h2 className="mb-4 text-lg font-bold text-white">
+                Rename Project
+              </h2>
               <input
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                className="w-full px-3 py-2 mb-4 bg-gray-700 text-white rounded focus:outline-none"
+                className="mb-4 w-full rounded bg-gray-700 px-3 py-2 text-white outline-none focus:ring-2 focus:ring-[#c7f022]"
+                placeholder="New project name"
               />
-              <div className="flex justify-end space-x-2">
-                <button onClick={() => setIsRenameOpen(false)} className="px-4 py-2 text-sm bg-gray-600 hover:bg-gray-700 rounded">
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setIsRenameOpen(false)}
+                  className="rounded bg-gray-600 px-4 py-2 text-sm hover:bg-gray-700"
+                >
                   Cancel
                 </button>
-                <button onClick={handleRename} className="px-4 py-2 text-sm bg-[#c7f022] text-black font-bold rounded">
+                <button
+                  onClick={handleRename}
+                  className="rounded bg-[#c7f022] px-4 py-2 text-sm font-bold text-black hover:bg-yellow-400"
+                >
                   Save
                 </button>
               </div>
@@ -335,17 +641,26 @@ function FolderPage() {
           </div>
         )}
 
-        {/* Delete Modal */}
         {isDeleteConfirmOpen && (
-          <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
-            <div className="bg-gray-800 p-6 rounded-lg w-80 shadow-lg">
-              <h2 className="text-lg font-bold text-red-400 mb-4">Delete this project?</h2>
-              <p className="text-gray-300 mb-4">This action cannot be undone.</p>
-              <div className="flex justify-end space-x-2">
-                <button onClick={() => setIsDeleteConfirmOpen(false)} className="px-4 py-2 text-sm bg-gray-600 hover:bg-gray-700 rounded">
+          <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
+            <div className="w-full max-w-sm rounded-lg bg-gray-800 p-6 shadow-lg">
+              <h2 className="mb-4 text-lg font-bold text-red-400">
+                Delete this project?
+              </h2>
+              <p className="mb-4 text-gray-300">
+                This action cannot be undone.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setIsDeleteConfirmOpen(false)}
+                  className="rounded bg-gray-600 px-4 py-2 text-sm hover:bg-gray-700"
+                >
                   Cancel
                 </button>
-                <button onClick={handleDelete} className="px-4 py-2 text-sm bg-red-600 hover:bg-red-700 font-bold rounded">
+                <button
+                  onClick={handleDelete}
+                  className="rounded bg-red-600 px-4 py-2 text-sm font-bold hover:bg-red-700"
+                >
                   Delete
                 </button>
               </div>
@@ -356,5 +671,3 @@ function FolderPage() {
     </div>
   );
 }
-
-export default FolderPage;
