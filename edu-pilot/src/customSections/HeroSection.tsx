@@ -2,7 +2,6 @@
 import { useEffect, useRef, forwardRef } from "react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { HeroDoc, HeroUpload } from "../CustomSVG";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -139,9 +138,8 @@ export default function HeroSection() {
 
   // Visuals
   const uploadWrapRef = useRef<HTMLDivElement | null>(null);
-  const uploadSvgRef = useRef<HTMLDivElement | null>(null); // <-- NEW: reiner Hover-Target für das SVG
-  const doc1Ref = useRef<HTMLDivElement | null>(null);
-  const doc2Ref = useRef<HTMLDivElement | null>(null);
+
+
 
   // Features
   const featuresRef = useRef<HTMLDivElement | null>(null);
@@ -251,52 +249,7 @@ export default function HeroSection() {
       }
 
       // Docs intro + idle bob
-      gsap.set([doc1Ref.current, doc2Ref.current], {
-        y: -200,
-        opacity: 0,
-        rotate: 0,
-        yPercent: 0,
-      });
-      const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
-      tl.to(doc1Ref.current, {
-        y: -300,
-        x: -60,
-        rotate: -6,
-        opacity: 1,
-        duration: 0.9,
-      })
-        .to(
-          doc2Ref.current,
-          { y: -260, x: 60, rotate: 6, opacity: 1, duration: 0.9 },
-          "<"
-        )
-        .to(
-          [doc1Ref.current, doc2Ref.current],
-          {
-            x: "+=4",
-            duration: 0.09,
-            repeat: 5,
-            yoyo: true,
-            ease: "power1.inOut",
-          },
-          "-=0.3"
-        );
-      toIf(doc1Ref.current, {
-        y: "-=8",
-        rotate: "-=2",
-        duration: 4.2,
-        repeat: -1,
-        yoyo: true,
-        ease: "sine.inOut",
-      });
-      toIf(doc2Ref.current, {
-        y: "+=8",
-        rotate: "+=2",
-        duration: 4.6,
-        repeat: -1,
-        yoyo: true,
-        ease: "sine.inOut",
-      });
+     
 
       // Features stagger
       if (featuresRef.current) {
@@ -326,18 +279,7 @@ export default function HeroSection() {
           duration: 0.6,
           ease: "power3.out",
         });
-        toIf(doc1Ref.current, {
-          x: dx * -30,
-          y: dy * -20,
-          duration: 0.6,
-          ease: "power3.out",
-        });
-        toIf(doc2Ref.current, {
-          x: dx * 30,
-          y: dy * 20,
-          duration: 0.6,
-          ease: "power3.out",
-        });
+       
         toIf(ringRef.current, {
           x: dx * 18,
           y: dy * 12,
@@ -348,27 +290,9 @@ export default function HeroSection() {
       scopeRef.current?.addEventListener("mousemove", onMove);
 
       // --- NEW: Hover auf das Upload-SVG -> Cards langsam nach unten
-      const hoverDown = () => {
-        gsap.to([doc1Ref.current, doc2Ref.current], {
-          yPercent: 14,
-          duration: 3.0, // slower
-          ease: "power2.out",
-          overwrite: "auto",
-          stagger: 0.06,
-        });
-      };
-      const hoverUp = () => {
-        gsap.to([doc1Ref.current, doc2Ref.current], {
-          yPercent: 0,
-          duration: 2.2, // slower return
-          ease: "power2.out",
-          overwrite: "auto",
-          stagger: 0.06,
-        });
-      };
+      
       // hover on the whole section/card instead of only the SVG
-      cardRef.current?.addEventListener("mouseenter", hoverDown);
-      cardRef.current?.addEventListener("mouseleave", hoverUp);
+  
 
       // Magnetic Buttons
       const makeMagnetic = (btn: HTMLButtonElement | null) => {
@@ -420,8 +344,8 @@ export default function HeroSection() {
 
       return () => {
         scopeRef.current?.removeEventListener("mousemove", onMove);
-        uploadSvgRef.current?.removeEventListener("mouseenter", hoverDown);
-        uploadSvgRef.current?.removeEventListener("mouseleave", hoverUp);
+        
+        
         cleanupMag1 && cleanupMag1();
         cleanupMag2 && cleanupMag2();
       };
@@ -432,7 +356,7 @@ export default function HeroSection() {
 
   return (
     <section
-      className="relative pt-20 pb-20"
+      className="relative pt-28 pb-28"
       style={{ backgroundColor: COLORS.BG, color: COLORS.TEXT }}
     >
       <div className="mx-auto max-w-7xl px-4">
@@ -519,19 +443,8 @@ export default function HeroSection() {
                   className="relative will-change-transform"
                 >
                   {/* Hover-Target um das Upload-SVG */}
-                  <div ref={uploadSvgRef} className="inline-block">
-                    <HeroUpload />
-                  </div>
-
-                  {/* die beiden kleinen Karten */}
-                  <div className="absolute top-[80%] left-1/2 -translate-x-1/2 flex gap-6 justify-center w-full">
-                    <div ref={doc1Ref} className="will-change-transform">
-                      <HeroDoc />
-                    </div>
-                    <div ref={doc2Ref} className="will-change-transform">
-                      <HeroDoc />
-                    </div>
-                  </div>
+                
+                  
                 </div>
               </div>
             </div>

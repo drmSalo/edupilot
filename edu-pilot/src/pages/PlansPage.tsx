@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { COLORS } from "../customSections/HeroSection";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -14,16 +15,20 @@ function PlansPage() {
   // Cleanup für Hover-Handler
   const moveHandlersRef = useRef<Map<HTMLDivElement, (e: MouseEvent) => void>>(new Map());
 
+  const [billing, setBilling] = useState<"monthly" | "yearly">("monthly");
+
   const plans = [
     {
       name: "Basic",
-      price: "Free",
-      features: ["PDF to Summary", "Project Saving", "Rename/Delete Projects"],
+      price: billing === "monthly" ? "Free" : "Free",
+      sub: billing === "monthly" ? "0 € / month" : "0 € / year",
+      features: ["PDF → Summary", "Project saving", "Rename/Delete projects"],
       highlight: false,
     },
     {
       name: "Prime",
-      price: "15.00€ / month",
+      price: billing === "monthly" ? "15 € / month" : "120 € / year",
+      sub: billing === "monthly" ? "billed monthly" : "save 33% (8×15€ → 120€)",
       features: [
         "Everything in Basic",
         "Generate Study Cards",
@@ -39,8 +44,8 @@ function PlansPage() {
       // Aura Pulse
       if (glowRef.current) {
         gsap.to(glowRef.current, {
-          scale: 1.2,
-          opacity: 0.8,
+          scale: 1.12,
+          opacity: 0.85,
           duration: 3,
           yoyo: true,
           repeat: -1,
@@ -66,7 +71,7 @@ function PlansPage() {
         );
       }
 
-      // Cards pop-in – NUR wenn vorhanden
+      // Cards pop-in
       const cardEls = cardsRef.current.filter(Boolean) as HTMLDivElement[];
       if (cardEls.length) {
         tl.fromTo(
@@ -101,7 +106,6 @@ function PlansPage() {
           el.style.setProperty("--mx", `${x}px`);
           el.style.setProperty("--my", `${y}px`);
         };
-        // Beim Mount setzt du Mittelwert, damit Gradient valide ist:
         el.style.setProperty("--mx", `50%`);
         el.style.setProperty("--my", `50%`);
         el.addEventListener("mousemove", onMove);
@@ -119,8 +123,16 @@ function PlansPage() {
   return (
     <div
       ref={rootRef}
-      className="relative min-h-screen bg-black text-white overflow-hidden"
-      style={{ isolation: "isolate" }} // eigener Stacking-Context, Content bleibt oben
+      className="relative min-h-screen overflow-hidden"
+      style={{
+        isolation: "isolate",
+        background: `
+          radial-gradient(1200px 800px at -10% -10%, ${COLORS.PRIMARY}22, transparent 60%),
+          radial-gradient(1200px 800px at 110% 110%, ${COLORS.ACCENT2}22, transparent 60%),
+          ${COLORS.BG}
+        `,
+        color: COLORS.TEXT,
+      }}
     >
       {/* Aura */}
       <div
@@ -128,8 +140,7 @@ function PlansPage() {
         aria-hidden
         className="pointer-events-none absolute -top-40 -left-40 h-[60rem] w-[60rem] rounded-full blur-3xl opacity-60 -z-20"
         style={{
-          background:
-            "radial-gradient(closest-side, rgba(199,240,34,0.18), rgba(0,0,0,0.0))",
+          background: `radial-gradient(closest-side, ${COLORS.PRIMARY}22, rgba(0,0,0,0))`,
         }}
       />
 
@@ -149,13 +160,45 @@ function PlansPage() {
         <h1
           ref={titleRef}
           data-parallax="title"
-          className="text-5xl md:text-6xl font-black tracking-tight mb-4 text-[#c7f022] drop-shadow-[0_0_30px_rgba(199,240,34,0.35)]"
+          className="text-5xl md:text-6xl font-black tracking-tight mb-4 drop-shadow-[0_0_30px_rgba(0,0,0,0.25)]"
+          style={{ color: COLORS.PRIMARY }}
         >
           Choose Your Plan
         </h1>
-        <p ref={subtitleRef} className="text-gray-300 max-w-2xl mx-auto mb-14">
+        <p
+          ref={subtitleRef}
+          className="max-w-2xl mx-auto mb-10"
+          style={{ color: COLORS.SUBTLE }}
+        >
           Whether you’re just getting started or want full access to EduPilot’s AI tools — we’ve got a plan for you.
         </p>
+
+        {/* Billing Toggle (nur UI/Design) */}
+        <div className="mb-12 inline-flex items-center rounded-2xl p-1"
+             style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${COLORS.BORDER}`, backdropFilter: "blur(8px)" }}>
+          <button
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${billing === "monthly" ? "shadow" : ""}`}
+            style={{
+              color: billing === "monthly" ? "#00131a" : COLORS.TEXT,
+              background: billing === "monthly" ? `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT})` : "transparent",
+              border: billing === "monthly" ? "none" : `1px solid transparent`,
+            }}
+            onClick={() => setBilling("monthly")}
+          >
+            Monthly
+          </button>
+          <button
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${billing === "yearly" ? "shadow" : ""}`}
+            style={{
+              color: billing === "yearly" ? "#00131a" : COLORS.TEXT,
+              background: billing === "yearly" ? `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT})` : "transparent",
+              border: billing === "yearly" ? "none" : `1px solid transparent`,
+            }}
+            onClick={() => setBilling("yearly")}
+          >
+            Yearly
+          </button>
+        </div>
       </div>
 
       {/* Cards */}
@@ -164,69 +207,72 @@ function PlansPage() {
           {plans.map((plan, idx) => (
             <div
               key={plan.name}
-              ref={(el: HTMLDivElement | null) => {
-                cardsRef.current[idx] = el;
-              }}
-              className={`group relative border-2 rounded-2xl p-8 md:p-10 shadow-2xl transition will-change-transform
-                ${
-                  plan.highlight
-                    ? "border-[#c7f022]/70 bg-[#0c0c0c]"
-                    : "border-white/10 bg-[#121212]"
-                }
-                hover:scale-[1.02] hover:-translate-y-1`}
+              ref={(el: HTMLDivElement | null) => { cardsRef.current[idx] = el; }}
+              className={`group relative rounded-2xl p-8 md:p-10 transition will-change-transform hover:scale-[1.02] hover:-translate-y-1`}
               style={{
+                background: COLORS.GLASS,
+                border: `1px solid ${COLORS.BORDER}`,
+                backdropFilter: "blur(12px)",
+                boxShadow: `0 10px 60px -20px rgba(0,0,0,0.7), inset 0 0 0 1px ${plan.highlight ? COLORS.PRIMARY + "22" : "rgba(255,255,255,0.05)"}`,
                 backgroundImage:
-                  // Fallback-Center, falls --mx/--my noch nicht gesetzt
-                  "radial-gradient(120px 120px at var(--mx, 50%) var(--my, 50%), rgba(199,240,34,0.08), transparent 40%)",
+                  "radial-gradient(120px 120px at var(--mx, 50%) var(--my, 50%), rgba(255,255,255,0.06), transparent 40%)",
               }}
             >
-              {/* Accent ring on hover */}
+              {/* Accent rim */}
               <div
-                className={`pointer-events-none absolute -inset-[2px] rounded-2xl opacity-0 group-hover:opacity-100 blur
-                ${plan.highlight ? "bg-[#c7f022]/25" : "bg-white/10"}`}
+                className="pointer-events-none absolute -inset-[1px] rounded-2xl opacity-0 group-hover:opacity-100 blur transition-opacity"
+                style={{ background: plan.highlight ? COLORS.PRIMARY + "22" : "rgba(255,255,255,0.10)" }}
               />
 
               <div className="relative">
                 <div className="flex items-center justify-between mb-5">
                   <h2 className="text-2xl md:text-3xl font-extrabold">{plan.name}</h2>
                   {plan.highlight && (
-                    <span className="text-[10px] uppercase tracking-widest bg-[#c7f022] text-black px-3 py-1 rounded-full font-bold">
+                    <span
+                      className="text-[10px] uppercase tracking-widest px-3 py-1 rounded-full font-bold"
+                      style={{ background: COLORS.PRIMARY, color: "#00131a" }}
+                    >
                       Popular
                     </span>
                   )}
                 </div>
 
-                <p className="text-4xl md:text-5xl font-black text-[#c7f022] mb-8">{plan.price}</p>
+                <div className="mb-1">
+                  <p className="text-4xl md:text-5xl font-black" style={{ color: COLORS.PRIMARY }}>
+                    {plan.price}
+                  </p>
+                  <p className="text-xs mt-1" style={{ color: COLORS.SUBTLE }}>{plan.sub}</p>
+                </div>
 
-                <ul className="text-left space-y-3 mb-10">
+                <ul className="text-left space-y-3 my-8">
                   {plan.features.map((feature) => (
-                    <li key={feature} className="flex items-center gap-3 text-gray-200">
-                      <span className="text-[#c7f022] text-xl">✔</span>
+                    <li key={feature} className="flex items-center gap-3">
+                      <span className="text-xl" style={{ color: COLORS.PRIMARY }}>✔</span>
                       <span>{feature}</span>
                     </li>
                   ))}
                 </ul>
 
                 <button
-                  className={`w-full py-3.5 rounded-xl font-semibold transition relative overflow-hidden
-                    ${
-                      plan.highlight
-                        ? "bg-[#c7f022] text-black hover:bg-yellow-300"
-                        : "bg-zinc-800 hover:bg-zinc-700"
-                    }`}
-                  onMouseEnter={(e) => {
-                    gsap.fromTo(e.currentTarget, { y: 0 }, { y: -2, duration: 0.18, ease: "power2.out" });
+                  className="w-full py-3.5 rounded-xl font-semibold transition relative overflow-hidden"
+                  style={{
+                    color: plan.highlight ? "#00131a" : COLORS.TEXT,
+                    background: plan.highlight
+                      ? `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT})`
+                      : "rgba(255,255,255,0.06)",
+                    border: plan.highlight ? "none" : `1px solid ${COLORS.BORDER}`,
+                    boxShadow: plan.highlight
+                      ? `0 10px 30px -10px ${COLORS.PRIMARY}aa, 0 0 40px ${COLORS.ACCENT}55`
+                      : "none",
                   }}
-                  onMouseLeave={(e) => {
-                    gsap.to(e.currentTarget, { y: 0, duration: 0.18, ease: "power2.out" });
-                  }}
+                  onMouseEnter={(e) => gsap.fromTo(e.currentTarget, { y: 0 }, { y: -2, duration: 0.18, ease: "power2.out" })}
+                  onMouseLeave={(e) => gsap.to(e.currentTarget, { y: 0, duration: 0.18, ease: "power2.out" })}
                 >
                   {plan.highlight ? "Upgrade to Prime" : "Start for Free"}
                   <span
                     className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
                     style={{
-                      background:
-                        "linear-gradient(120deg, transparent 0%, rgba(255,255,255,0.35) 35%, transparent 70%)",
+                      background: "linear-gradient(120deg, transparent 0%, rgba(255,255,255,0.35) 35%, transparent 70%)",
                       transform: "translateX(-120%) rotate(5deg)",
                     }}
                   />

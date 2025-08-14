@@ -13,6 +13,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { PluggableList } from "unified";
+import { COLORS } from "../customSections/HeroSection"; // Design-Palette
 
 interface Card {
   question: string;
@@ -24,11 +25,7 @@ const katexSanitizeSchema: any = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
-    span: [
-      ...(defaultSchema.attributes?.span || []),
-      ["className"],
-      ["style"],
-    ],
+    span: [...(defaultSchema.attributes?.span || []), ["className"], ["style"]],
     math: [["className"]],
     annotation: [["encoding"]],
   },
@@ -69,7 +66,7 @@ function safeId(name: string) {
   return (slug || base.replace(/\W+/g, "-")).slice(0, 120);
 }
 
-/* --- FlipCard Component --- */
+/* --- FlipCard Component (nur Design geändert) --- */
 function FlipCard({ index, question, answer }: { index: number; question: string; answer: string }) {
   const [flipped, setFlipped] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -78,7 +75,7 @@ function FlipCard({ index, question, answer }: { index: number; question: string
   useEffect(() => {
     if (!wrapperRef.current || !innerRef.current) return;
     gsap.set(wrapperRef.current, { perspective: 1200 });
-    gsap.set(innerRef.current, { transformStyle: "preserve-3d", rotateY: 0 });
+    gsap.set(innerRef.current, { rotateY: 0 });
   }, []);
 
   useEffect(() => {
@@ -90,58 +87,105 @@ function FlipCard({ index, question, answer }: { index: number; question: string
     });
   }, [flipped]);
 
-  const toggle = () => setFlipped((v) => !v);
+  const toggle = () => setFlipped(v => !v);
 
   return (
     <div
       ref={wrapperRef}
-      className="group relative h-48 sm:h-56 md:h-64"
+      className="group relative h-48 sm:h-56 md:h-64 cursor-pointer select-none"
       role="button"
       aria-pressed={flipped}
       tabIndex={0}
       onClick={toggle}
       onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && toggle()}
+      style={{ perspective: 1200 }}
     >
+      {/* WICHTIG: KEIN backdropFilter HIER */}
       <div
         ref={innerRef}
-        className="absolute inset-0 rounded-2xl shadow-xl bg-gray-800/90 ring-1 ring-white/5 transition-transform"
+        className="absolute inset-0 rounded-2xl transition-transform will-change-transform"
+        style={{
+          transformStyle: "preserve-3d",
+          // Nur eine dünne Outline/Shadow auf dem Flipper selbst:
+          border: "1px solid rgba(255,255,255,0.08)",
+          boxShadow: "0 10px 40px -20px rgba(0,0,0,0.7)",
+          overflow: "hidden",
+        }}
       >
-        {/* Front (Question) */}
+        {/* FRONT */}
         <div
-          className="absolute inset-0 backface-hidden rounded-2xl p-5 flex flex-col justify-center
-                     bg-gradient-to-br from-gray-800 via-gray-800 to-gray-900"
-          style={{ WebkitBackfaceVisibility: "hidden", backfaceVisibility: "hidden" }}
-        >
-          <div className="text-[#c7f022] text-md font-semibold tracking-wider mb-2">
-            Q{index + 1}
-          </div>
-          <MarkdownWithMath text={question} className="prose prose-invert max-w-none text-base" />
-          <div className="absolute bottom-3 right-4 text-[10px] uppercase tracking-wider text-gray-400 opacity-0 group-hover:opacity-100 transition">
-            Click to reveal
-          </div>
-        </div>
-
-        {/* Back (Answer) */}
-        <div
-          className="inset-0 rounded-2xl p-5 flex flex-col justify-center text-[#c7f022]"
+          className="absolute inset-0 rounded-2xl p-5 flex flex-col justify-center"
           style={{
-            transform: "rotateY(180deg)",
+            transform: "rotateY(0deg) translateZ(0)",   // zwingt eigenes 3D-Layer
             WebkitBackfaceVisibility: "hidden",
             backfaceVisibility: "hidden",
+            // Glas-Optik AUF DER SEITE, nicht auf dem Flipper:
+            background: "rgba(17,24,39,0.85)",          // #111827 @ 85%
+            // kein backdropFilter hier, um Safari/Chrome-Bugs zu vermeiden
           }}
         >
-          <div className="text-white text-xs font-semibold tracking-wider mb-2">Answer</div>
-          <MarkdownWithMath text={answer} className="prose max-w-none text-base" />
-          <div className="absolute bottom-3 right-4 text-[10px] uppercase tracking-wider text-white opacity-0 group-hover:opacity-100 transition">
-            Click to flip back
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-semibold tracking-wider" style={{ color: COLORS.PRIMARY }}>
+              Q{index + 1}
+            </div>
+            <div className="text-[10px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition" style={{ color: COLORS.SUBTLE }}>
+              Click to reveal
+            </div>
           </div>
+
+          <MarkdownWithMath text={question} className="prose prose-invert max-w-none text-base" />
+
+          <div
+            aria-hidden
+            className="absolute left-0 right-0 bottom-0 h-[2px] opacity-70"
+            style={{ backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT2}, ${COLORS.ACCENT})` }}
+          />
         </div>
+
+        {/* BACK */}
+        <div
+          className="absolute inset-0 rounded-2xl p-5 flex flex-col justify-center"
+          style={{
+            transform: "rotateY(180deg) translateZ(0)",
+            WebkitBackfaceVisibility: "hidden",
+            backfaceVisibility: "hidden",
+            background: "rgba(17,24,39,0.90)",          // leicht anders für Kontrast
+            borderTop: "1px solid rgba(255,255,255,0.08)",
+          }}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-semibold tracking-wider" style={{ color: "#fff" }}>
+              Answer
+            </div>
+            <div className="text-[10px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition" style={{ color: COLORS.SUBTLE }}>
+              Click to flip back
+            </div>
+          </div>
+
+          <MarkdownWithMath text={answer} className="prose max-w-none text-base" />
+
+          <div
+            aria-hidden
+            className="absolute left-0 right-0 bottom-0 h-[2px] opacity-70"
+            style={{ backgroundImage: `linear-gradient(90deg, ${COLORS.ACCENT}, ${COLORS.ACCENT2}, ${COLORS.PRIMARY})` }}
+          />
+        </div>
+
+        {/* Hover Glow */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -inset-[1px] rounded-2xl opacity-0 group-hover:opacity-100 blur transition-opacity"
+          style={{ background: `${COLORS.PRIMARY}22` }}
+        />
       </div>
     </div>
   );
 }
 
-/* --- Page --- */
+
+
+
+/* --- Page (nur Design geändert) --- */
 function CardsPage() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
@@ -156,7 +200,6 @@ function CardsPage() {
       const uid = user?.uid;
 
       if (!uid || !projectId) {
-        console.warn("Missing UID or projectId, aborting fetch.");
         setLoading(false);
         return;
       }
@@ -169,7 +212,6 @@ function CardsPage() {
           const data = docSnap.data() as any;
           setCards(data.cards || []);
         } else {
-          console.warn("No document found for this user/project.");
           setCards([]);
         }
       } catch (err) {
@@ -184,40 +226,88 @@ function CardsPage() {
   }, [projectId]);
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white px-4 py-10 sm:px-6 lg:px-8">
+    <div
+      className="min-h-screen px-4 py-10 sm:px-6 lg:px-8"
+      style={{
+        background: `
+          radial-gradient(1200px 800px at -10% -10%, ${COLORS.PRIMARY}22, transparent 60%),
+          radial-gradient(1200px 800px at 110% 110%, ${COLORS.ACCENT2}22, transparent 60%),
+          ${COLORS.BG}
+        `,
+        color: COLORS.TEXT,
+      }}
+    >
       <div className="max-w-5xl mx-auto">
+        {/* Sticky header */}
         <div
-          className="flex items-center mb-6 space-x-3 cursor-pointer"
-          onClick={() => navigate(-1)}
+          className="sticky top-0 z-10 -mx-2 sm:-mx-4 px-2 sm:px-4 py-4 mb-6 backdrop-blur-md"
+          style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0))" }}
         >
-          <FaArrowLeft className="text-[#c7f022] text-lg hover:text-yellow-400 transition" />
+          <button
+            className="inline-flex items-center gap-2 text-sm hover:opacity-90"
+            onClick={() => navigate(-1)}
+            aria-label="Back"
+          >
+            <FaArrowLeft style={{ color: COLORS.PRIMARY }} />
+            <span className="underline underline-offset-4 decoration-[rgba(255,255,255,0.25)]">
+              Back
+            </span>
+          </button>
+
+          <h1 className="mt-4 text-3xl font-extrabold tracking-tight">
+            Study Cards: <span style={{ color: COLORS.PRIMARY }}>{name}</span>
+          </h1>
+
+          <div
+            aria-hidden
+            className="mt-4 h-[2px] w-full opacity-70"
+            style={{
+              backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT2}, ${COLORS.ACCENT})`,
+            }}
+          />
         </div>
 
-        <h1 className="text-3xl font-bold text-[#c7f022] mb-6">
-          Study Cards: {name}
-        </h1>
-
-        {loading ? (
-          <div className="flex items-center justify-center py-10">
-            <svg
-              className="animate-spin h-10 w-10 text-[#c7f022] drop-shadow-[0_0_8px_rgba(199,240,34,0.8)]"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
+        {/* Content card */}
+        <div
+          className="rounded-3xl p-6 sm:p-8"
+          style={{
+            background: COLORS.GLASS,
+            border: `1px solid ${COLORS.BORDER}`,
+            backdropFilter: "blur(12px)",
+            boxShadow: `0 10px 60px -20px rgba(0,0,0,0.7), 0 0 40px 6px ${COLORS.PRIMARY}22`,
+          }}
+        >
+          {loading ? (
+            <div className="flex items-center justify-center py-10">
+              <svg
+                className="animate-spin h-10 w-10"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                style={{ color: COLORS.PRIMARY }}
+              >
+                <circle className="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3.5a4.5 4.5 0 00-4.5 4.5H4z" />
+              </svg>
+            </div>
+          ) : Array.isArray(cards) && cards.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {cards.map((card, i) => (
+                <FlipCard key={i} index={i} question={card.question} answer={card.answer} />
+              ))}
+            </div>
+          ) : (
+            <div
+              className="rounded-xl px-4 py-3 text-sm"
+              style={{
+                background: `${COLORS.ACCENT2}22`,
+                border: `1px solid ${COLORS.ACCENT2}55`,
+              }}
             >
-              <circle className="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3.5a4.5 4.5 0 00-4.5 4.5H4z"></path>
-            </svg>
-          </div>
-        ) : Array.isArray(cards) && cards.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {cards.map((card, i) => (
-              <FlipCard key={i} index={i} question={card.question} answer={card.answer} />
-            ))}
-          </div>
-        ) : (
-          <p className="text-red-400">No study cards available for this project.</p>
-        )}
+              No study cards available for this project.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

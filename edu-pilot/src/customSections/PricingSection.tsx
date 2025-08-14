@@ -6,7 +6,7 @@ export default function PricingSection() {
     { name: "Prime", price: "€8/mo", features: ["All Basic", "Unlimited cards", "Exam questions", "Priority support"], prime: true },
   ];
   return (
-    <section id="pricing" className="py-20" style={{ background: COLORS.BG, color: COLORS.TEXT }}>
+    <section id="pricing" className="py-28" style={{ background: COLORS.BG, color: COLORS.TEXT }}>
       <div className="mx-auto max-w-7xl px-4">
         <h2 className="text-3xl sm:text-4xl font-bold mb-12">Pricing</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -21,7 +21,12 @@ import { useAuth } from "./context/AuthContext";
 import PlansPage from "./pages/PlansPage";
 import SummaryPage from "./pages/SummaryPage";
 import CardsPage from "./pages/CardsPage";
-import HomeTest from "./pages/TestPage";
+import Reveal from "./components/Reveal";
+import TestimonialsSection from "./customSections/TestimonialsSection";
+import FAQSection from "./customSections/FAQSection";
+import CTASection from "./customSections/CTASection";
+import StatsStrip from "./customSections/StatsStrip";
+import TestPage from "./pages/TestPage";
 
 gsap.registerPlugin(ScrollToPlugin);
 
@@ -101,45 +106,42 @@ export function HomePage() {
   const pricingRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="">
+    <div className="bg-[#060916]">
       <Header
-        onHomeClick={() =>
-          gsap.to(window, {
-            duration: 1,
-            scrollTo: { y: aboutUsRef.current!, offsetY: 80 },
-            ease: "power2.out",
-          })
-        }
-        onAboutUsClick={() =>
-          gsap.to(window, {
-            duration: 1,
-            scrollTo: { y: explanationRef.current!, offsetY: 80 },
-            ease: "power2.out",
-          })
-        }
-        onPricingClick={() =>
-          gsap.to(window, {
-            duration: 1,
-            scrollTo: { y: pricingRef.current!, offsetY: 80 },
-            ease: "power2.out",
-          })
-        }
+        onHomeClick={() => gsap.to(window, { duration: 1, scrollTo: { y: aboutUsRef.current!, offsetY: 80 }, ease: "power2.out" })}
+        onAboutUsClick={() => gsap.to(window, { duration: 1, scrollTo: { y: explanationRef.current!, offsetY: 80 }, ease: "power2.out" })}
+        onPricingClick={() => gsap.to(window, { duration: 1, scrollTo: { y: pricingRef.current!, offsetY: 80 }, ease: "power2.out" })}
       />
+
       <HeroSection />
+
+      <Reveal y={60}><StatsStrip /></Reveal>
+
       <div ref={aboutUsRef}>
-        <AboutUsSection />
+        <Reveal y={60}><AboutUsSection /></Reveal>
       </div>
+
       <div ref={explanationRef}>
-        <ExplanationSection />
+        <Reveal y={60} delay={0.05}><ExplanationSection /></Reveal>
       </div>
-      <LiteratureSection />
+
+      <Reveal y={60} delay={0.08}><LiteratureSection /></Reveal>
+
+      <Reveal y={60} delay={0.1}><TestimonialsSection /></Reveal>
+
       <div ref={pricingRef}>
-        <PricingSection />
+        <Reveal y={60} delay={0.1}><PricingSection /></Reveal>
       </div>
+
+      <Reveal y={60}><FAQSection /></Reveal>
+
+      <Reveal y={60}><CTASection /></Reveal>
+
       <FooterSection />
     </div>
   );
 }
+
 
 /* -------- App mit Smooth Wheel Hook -------- */
 function App() {
@@ -162,7 +164,7 @@ function App() {
 
   return (
     <Router>
-      <div className="bg-gradient-to-br from-[#191834] via-[#2b2c68] to-[#61bdaf]">
+      <div>
         <main>
           <Routes>
             <Route path="/" element={<HomePage />} />
@@ -181,7 +183,7 @@ function App() {
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/plans" element={<PlansPage />} />
               <Route path="/cards/:name" element={<CardsPage />} />
-              <Route path="/test" element={<HomeTest />} />
+              <Route path="/test/:name" element={<TestPage/>}/>
             </Route>
           </Routes>
         </main>
