@@ -1,99 +1,33 @@
-import { useEffect, useRef } from "react";
-import { gsap } from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
-import Container from "../components/Container";
+import { COLORS } from "./HeroSection";
 
-gsap.registerPlugin(ScrollTrigger);
-
-function ExplanationSection() {
-  const sectionRef = useRef<HTMLElement>(null);
-  const leftImageRef = useRef<HTMLImageElement>(null);
-  const rightImageRef = useRef<HTMLImageElement>(null);
-  const textRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const section = sectionRef.current;
-    if (!section) return;
-  
-    const ctx = gsap.context(() => {
-      // Linkes Bild: Fade-in von unten
-      gsap.from(leftImageRef.current, {
-        y: 100,
-        opacity: 0,
-        duration: 1.2,
-        ease: "power3.out",
-        scrollTrigger: {
-          trigger: section,
-          start: "top 80%",
-        },
-      });
-  
-      // Rechtes Bild: Fade-in von unten
-      gsap.from(rightImageRef.current, {
-        y: 100,
-        opacity: 0,
-        duration: 1.2,
-        ease: "power3.out",
-        scrollTrigger: {
-          trigger: section,
-          start: "top 80%",
-        },
-      });
-    }, section);
-  
-    return () => ctx.revert();
-  }, []);
-  
-  
-  
-
+export default function ExplanationSection() {
+  const steps = [
+    { title: "Upload PDF", desc: "Drop textbook, slides, notes.", color: COLORS.PRIMARY },
+    { title: "Process", desc: "Parse & summarize smartly.", color: COLORS.ACCENT },
+    { title: "Generate", desc: "Flashcards & exam questions.", color: COLORS.ACCENT2 },
+  ];
   return (
-    <section
-      ref={sectionRef}
-      className="min-h-screen bg-cover bg-center py-50 bg-fixed bg-no-repeat"
-      style={{ backgroundImage: "url('/explanationSectionBg.jpg')" }}
-    >
-      <h2 className="text-center text-[#c7f022] text-4xl font-bold mb-20">
-        From Shakespeare to Science — Edu Pilot Has You Covered
-      </h2>
-
-      <div className="flex flex-col lg:flex-row justify-between items-center gap-12 max-w-[1800px] w-[90%] mx-auto">
-        <div ref={leftImageRef}>
-          <img
-            className="w-full max-w-md rounded-2xl"
-            src="/ShakespeareEinstein.png"
-            alt="Einstein"
-          />
+    <section id="how" className="py-20" style={{ background: COLORS.BG, color: COLORS.TEXT }}>
+      <div className="mx-auto max-w-7xl px-4">
+        <h2 className="text-3xl sm:text-4xl font-bold mb-12">How it works</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {steps.map((s) => (
+            <div
+              key={s.title}
+              className="rounded-2xl p-6"
+              style={{
+                background: COLORS.GLASS,
+                border: `1px solid ${COLORS.BORDER}`,
+                backdropFilter: "blur(10px)",
+                boxShadow: `0 10px 40px -20px ${s.color}99`,
+              }}
+            >
+              <div className="text-xl font-semibold mb-2" style={{ color: s.color }}>{s.title}</div>
+              <p className="text-sm" style={{ color: COLORS.SUBTLE }}>{s.desc}</p>
+            </div>
+          ))}
         </div>
-
-        <div ref={textRef} className="px-6 relative text-center z-20">
-          <p className="text-white text-3xl uppercase">
-            <span className="block">=</span>
-          </p>
-        </div>
-
-        <div ref={rightImageRef}>
-          <img
-            className="w-full max-w-md rounded-2xl"
-            src="/CyberShakespeareEinstein.png"
-            alt="Cyber Einstein"
-          />
-        </div>
-      </div>
-      <div>
-        <Container>
-        <p className="text-white border-1 border-[#c7f022] font-light text-2xl mt-20 bg-[#000] p-8 rounded-lg">
-          Edu Pilot combines the brilliance of Einstein with the eloquence of
-          Shakespeare — so no matter if you're solving complex equations or
-          analyzing classic literature, you're always prepared. Our AI adapts to
-          your subject, extracts the key points, and gives you summaries,
-          flashcards, and practice questions tailored for your needs. It’s like
-          having the world’s smartest study partner — in your pocket.
-        </p>
-        </Container>
       </div>
     </section>
   );
 }
-
-export default ExplanationSection;

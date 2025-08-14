@@ -1,49 +1,22 @@
-import Container from "../components/Container";
+import { COLORS } from "./HeroSection";
 
-function LiteratureSection() {
+export default function LiteratureSection() {
   return (
-    <section className="min-h-screen bg-black py-50">
-      <Container>
-        <div>
-          <h2 className="text-center text-4xl font-bold text-[#c7f022]">
-            Learn with the Speed you've never learned before
-          </h2>
+    <section className="py-16" style={{ background: COLORS.BG, color: COLORS.TEXT }}>
+      <div className="mx-auto max-w-7xl px-4 text-center">
+        <div className="text-sm mb-6" style={{ color: COLORS.SUBTLE }}>Trusted by students from</div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 opacity-85">
+          {["Leuphana", "TUM", "ETH", "Humboldt"].map((n) => (
+            <div
+              key={n}
+              className="px-4 py-3 rounded-lg"
+              style={{ background: COLORS.GLASS, border: `1px solid ${COLORS.BORDER}`, backdropFilter: "blur(10px)" }}
+            >
+              {n}
+            </div>
+          ))}
         </div>
-        <div>
-          <ul className="flex flex-col md:flex-row justify-center items-stretch text-white gap-8 my-16">
-            <li className="text-white max-w-lg w-full mx-auto bg-[rgba(46,46,46,0.42)] rounded-md p-6">
-              <h4 className="uppercase font-bold mb-6 text-[#c7f022]">
-                Skip the 300 Pages
-              </h4>
-              <p className="font-light">
-                No need to read every line. EduPilot finds the key concepts,
-                definitions, and explanations — so you focus only on what really
-                matters.
-              </p>
-            </li>
-            <li className="text-white max-w-lg w-full mx-auto bg-[rgba(46,46,46,0.42)] rounded-md p-6">
-              <h4 className="uppercase font-bold mb-6">Study Exam-Focused</h4>
-              <p>
-                EduPilot highlights the most exam-relevant parts of your
-                lecture. No more guessing what to learn — it’s all served to
-                you, sorted and simplified.
-              </p>
-            </li>
-            <li className="text-white max-w-lg w-full mx-auto bg-[rgba(46,46,46,0.42)] rounded-md p-6">
-              <h4 className="uppercase font-bold mb-6 text-[#c7f022]">
-                Learn Smarter, Not Harder
-              </h4>
-              <p>
-                Get AI-generated questions that reinforce your knowledge and
-                save time. Learn faster, remember more, and walk into your exam
-                with confidence.
-              </p>
-            </li>
-          </ul>
-        </div>
-      </Container>
+      </div>
     </section>
   );
 }
-
-export default LiteratureSection;

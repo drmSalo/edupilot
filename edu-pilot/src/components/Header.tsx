@@ -1,75 +1,44 @@
-import { useState } from "react";
-import CustomButton from "./CustomButton";
-import { Link } from "react-router-dom";
+import { COLORS } from "../customSections/HeroSection";
 
-interface HeaderProps {
+export default function Header({
+  onHomeClick,
+  onAboutUsClick,
+  onPricingClick,
+}: {
   onHomeClick: () => void;
   onAboutUsClick: () => void;
   onPricingClick: () => void;
-}
-
-function Header({ onHomeClick, onAboutUsClick, onPricingClick }: HeaderProps) {
-  const [isOpen, setIsOpen] = useState(false);
-
+}) {
   return (
-    <header className="bg-[#c7f022] w-[90%] max-w-xl m-auto rounded-3xl">
-      <nav className="flex justify-between items-center px-6 py-4 gap-3 ">
-        <h1 className="text-black font-black text-3xl left-6 top-4 sm:static sm:top-auto hover:text-white cursor-pointer">
-          Edu Pilot
-        </h1>
-
-        <div className="sm:hidden z-50 ml-auto" onClick={() => setIsOpen(!isOpen)}>
-          <button className="text-black focus:outline-none">
-            <svg
-              className="w-8 h-8"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              {isOpen ? (
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              ) : (
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              )}
-            </svg>
-          </button>
+    <header
+      className="sticky top-0 z-40 backdrop-blur-md"
+      style={{ background: "rgba(3, 6, 16, 0.6)", borderBottom: `1px solid ${COLORS.BORDER}`, color: COLORS.TEXT }}
+    >
+      <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
+        <div className="font-black tracking-tight text-lg">
+          <span
+            style={{
+              backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT})`,
+              WebkitBackgroundClip: "text",
+              backgroundClip: "text",
+              color: "transparent",
+            }}
+          >
+            EDU•PILOT
+          </span>
         </div>
-
-        <ul
-          className={`${
-            isOpen ? "flex" : "hidden"
-          } sm:flex flex-col sm:flex-row gap-6 sm:gap-8 text-black font-bold rounded-b-2xl text-lg absolute sm:static top-full left-0 w-full sm:w-auto bg-[#c7f022] sm:bg-transparent px-6 py-4 sm:p-0 z-40`}
+        <nav className="hidden sm:flex items-center gap-6 text-sm">
+          <button onClick={onHomeClick} className="opacity-90 hover:opacity-100">Home</button>
+          <button onClick={onAboutUsClick} className="opacity-90 hover:opacity-100">About</button>
+          <button onClick={onPricingClick} className="opacity-90 hover:opacity-100">Pricing</button>
+        </nav>
+        <button
+          className="hidden sm:inline-flex items-center px-4 py-2 rounded-md text-sm font-medium"
+          style={{ border: `1px solid ${COLORS.BORDER}`, color: COLORS.TEXT, background: "rgba(255,255,255,0.02)", backdropFilter: "blur(6px)" }}
         >
-          <li className="cursor-pointer" onClick={() => { onHomeClick(); setIsOpen(false); }}>Home</li>
-          <li className="cursor-pointer" onClick={() => { onAboutUsClick(); setIsOpen(false); }}>About Us</li>
-          <li className="cursor-pointer" onClick={() => { onPricingClick(); setIsOpen(false); }}>Pricing</li>
-        </ul>
-
-        <div className="hidden sm:block">
-          <Link to="/login">
-            <CustomButton
-              containerStyles="bg-black px-4 py-2 rounded-full"
-              textStyles="text-[#c7f022] font-bold"
-              text="LogIn"
-            />
-          </Link>
-        </div>
-      </nav>
-
-      {isOpen && (
-        <div className="sm:hidden flex justify-center pb-4">
-          <Link to="/login">
-            <CustomButton
-              containerStyles="bg-black px-4 py-2 rounded-full"
-              textStyles="text-[#c7f022] font-bold"
-              text="LogIn"
-            />
-          </Link>
-        </div>
-      )}
+          Get started
+        </button>
+      </div>
     </header>
   );
 }
-
-export default Header;

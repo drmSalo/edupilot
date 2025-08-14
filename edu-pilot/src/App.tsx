@@ -1,6 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import "katex/dist/katex.min.css";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import gsap from "gsap";
 import { ScrollToPlugin } from "gsap/ScrollToPlugin";
 
@@ -16,7 +16,7 @@ import ProtectedRoute from "./ProtectedRoutes";
 import ProjectsPage from "./pages/ProjectsPage";
 import ProfilePage from "./pages/ProfilePage";
 import Layout from "./components/Layout";
-import FolderPage from "./pages/FolderPage"; // NEU
+import FolderPage from "./pages/FolderPage";
 import { useAuth } from "./context/AuthContext";
 import PlansPage from "./pages/PlansPage";
 import SummaryPage from "./pages/SummaryPage";
@@ -25,13 +25,83 @@ import HomeTest from "./pages/TestPage";
 
 gsap.registerPlugin(ScrollToPlugin);
 
+/* -------- GSAP Smooth Wheel (global) -------- */
+function useGsapSmoothWheel(opts?: {
+  duration?: number;   // Dauer der Animation
+  ease?: string;       // GSAP Ease
+  multiplier?: number; // Scroll-Strecke pro Rad-Dreh
+}) {
+  useEffect(() => {
+    const isTouch =
+      "ontouchstart" in window ||
+      (navigator as any).maxTouchPoints > 0 ||
+      (navigator as any).msMaxTouchPoints > 0;
+
+    if (isTouch) return; // Mobile/Touch: nativ lassen
+
+    const duration = opts?.duration ?? 0.6;
+    const ease = (opts?.ease ?? "power3.out") as any;
+    const multiplier = opts?.multiplier ?? 0.9;
+
+    const onWheel = (e: WheelEvent) => {
+      // Modifikatoren/Zoom/Horizontal ignorieren
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        // Native Scroll erlauben in Eingaben/scrollbaren Containern
+        if (
+          target.closest("input, textarea, select, [contenteditable], [data-native-scroll]") ||
+          hasScrollableAncestor(target)
+        ) {
+          return;
+        }
+      }
+
+      e.preventDefault();
+
+      const current = window.scrollY || window.pageYOffset;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      const delta = e.deltaY * multiplier;
+      const next = clamp(current + delta, 0, max);
+
+      gsap.to(window, {
+        duration,
+        ease,
+        scrollTo: { y: next },
+      });
+    };
+
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, [opts]);
+}
+
+function hasScrollableAncestor(el: HTMLElement) {
+  let node: HTMLElement | null = el;
+  while (node && node !== document.body) {
+    const style = window.getComputedStyle(node);
+    const overY = style.overflowY;
+    const canScroll =
+      (overY === "auto" || overY === "scroll") && node.scrollHeight > node.clientHeight;
+    if (canScroll) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(n, max));
+}
+
+/* -------- HomePage bleibt wie gehabt -------- */
 export function HomePage() {
   const aboutUsRef = useRef<HTMLDivElement>(null);
   const explanationRef = useRef<HTMLDivElement>(null);
   const pricingRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="pt-4">
+    <div className="">
       <Header
         onHomeClick={() =>
           gsap.to(window, {
@@ -71,8 +141,16 @@ export function HomePage() {
   );
 }
 
+/* -------- App mit Smooth Wheel Hook -------- */
 function App() {
   const { loading } = useAuth();
+
+  // Smooth, langsames Scrollen aktivieren (Desktop)
+  useGsapSmoothWheel({
+    duration: 0.65,   // langsamer/smoother
+    ease: "power3.out",
+    multiplier: 0.9,  // Strecke pro Wheel (größer = schneller)
+  });
 
   if (loading) {
     return (
@@ -98,13 +176,12 @@ function App() {
               }
             >
               <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/projects/:name" element={<FolderPage />} />{" "}
-              {/* NEU */}
+              <Route path="/projects/:name" element={<FolderPage />} />
               <Route path="/summary/:name" element={<SummaryPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/plans" element={<PlansPage />} />
               <Route path="/cards/:name" element={<CardsPage />} />
-              <Route path="/test" element={<HomeTest/>} />
+              <Route path="/test" element={<HomeTest />} />
             </Route>
           </Routes>
         </main>
