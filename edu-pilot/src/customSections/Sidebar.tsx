@@ -74,6 +74,12 @@ function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
                   {!isCollapsed && <span>Home</span>}
                 </div>
               </CustomNavLink>
+              <CustomNavLink to="/test">
+                <div className="flex items-center gap-3">
+                  <FaHome />
+                  {!isCollapsed && <span>Home</span>}
+                </div>
+              </CustomNavLink>
 
               <button
                 onClick={() => setShowModal(true)}

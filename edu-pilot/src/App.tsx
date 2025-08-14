@@ -21,7 +21,7 @@ import { useAuth } from "./context/AuthContext";
 import PlansPage from "./pages/PlansPage";
 import SummaryPage from "./pages/SummaryPage";
 import CardsPage from "./pages/CardsPage";
-import TestPage from "./pages/TestPage";
+import HomeTest from "./pages/TestPage";
 
 gsap.registerPlugin(ScrollToPlugin);
 
@@ -104,7 +104,7 @@ function App() {
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/plans" element={<PlansPage />} />
               <Route path="/cards/:name" element={<CardsPage />} />
-              <Route path="/test/:name" element={<TestPage />} />
+              <Route path="/test" element={<HomeTest/>} />
             </Route>
           </Routes>
         </main>
