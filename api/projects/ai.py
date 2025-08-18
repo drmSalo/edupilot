@@ -8,6 +8,7 @@ import re
 import time
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 
@@ -21,6 +22,9 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 BASIC = "basic"
 PRIME = "prime"
+
+# Parallelität konfigurierbar
+OPENAI_CONCURRENCY = int(os.getenv("OPENAI_CONCURRENCY", "4"))  # 4–6 ist sinnvoll
 
 
 def _utc_date() -> str:
@@ -56,192 +60,43 @@ def choose_model_for_summary(plan: str, text: str, page_count: int) -> str:
 
 
 # ---------------------------
-# JSON-Sanitizing & Parsing (fehlertolerant)
+# Minimaler JSON-Parser (keine Validierung, keine Reparatur)
 # ---------------------------
 _JSON_TRAIL_COMMA = re.compile(r",\s*([\]}])")
 
 def _strip_code_fences(s: str) -> str:
-    s = s.strip()
+    s = (s or "").strip()
     if s.startswith("```"):
         s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
         s = re.sub(r"\s*```$", "", s)
     return s.strip()
 
-def _extract_json_array(raw: str) -> Optional[str]:
+def _parse_json_array_fast(raw: str):
     """
-    Extrahiert die erste balancierte JSON-Array-Sequenz.
-    Robust gegen Vor-/Nach-Text oder Markdown.
+    Minimal: versucht JSON/JSON5 zu laden. Kein Schema, keine Reparatur.
+    Liefert [] bei Fehler.
     """
-    s = _strip_code_fences(raw)
-    start = s.find("[")
-    if start == -1:
-        return None
-
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start, len(s)):
-        ch = s[i]
-        if in_string:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_string = False
-        else:
-            if ch == '"':
-                in_string = True
-            elif ch == "[":
-                depth += 1
-            elif ch == "]":
-                depth -= 1
-                if depth == 0:
-                    return s[start : i + 1]
-    return None
-
-def _json5_then_json(s: str):
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        return json5.loads(s)
-
-# --- LaTeX Normalisierung (robuster) ---
-_LATEX_DOLLARS   = re.compile(r"^\s*\$\$\s*|\s*\$\$\s*$")
-_LATEX_BRACKETS  = re.compile(r"^\s*\\\[\s*|\s*\\\]\s*$")
-_LATEX_VEC_SPACE = re.compile(r"(\\vec)\s+([A-Za-z0-9])")
-_NEWLINES        = re.compile(r"(?:\r\n|\r|\n)+")
-_ZWSP_LIKE       = re.compile(r"[\u200B-\u200D\u2060]")  # zero-width chars
-_WS_MULTI        = re.compile(r"[ \t\f\v\u00A0]+")
-
-# bekannte LaTeX-Operator-Tokens (ohne führenden Backslash)
-_OP_TOKENS = (
-    "odot","oplus","ominus","otimes","cdot","times","cup","cap",
-    "land","lor","implies","iff","leq","geq","neq","in","notin",
-    "subset","subseteq","supset","supseteq","forall","exists"
-)
-# Unicode-Mapping -> LaTeX
-_UNICODE_MAP = {
-    "⊕": r"\oplus", "⊙": r"\odot", "⊗": r"\otimes", "·": r"\cdot", "×": r"\times",
-    "∈": r"\in", "∉": r"\notin", "≤": r"\leq", "≥": r"\geq", "≠": r"\neq",
-    "∪": r"\cup", "∩": r"\cap", "⊂": r"\subset", "⊆": r"\subseteq",
-    "⊃": r"\supset", "⊇": r"\supseteq", "∧": r"\land", "∨": r"\lor",
-    "⇒": r"\implies", "⇔": r"\iff",
-}
-
-# Regex: fehlender Backslash vor bekannten Tokens
-_TOKENS_RE = re.compile(rf"(?<!\\)\b({'|'.join(_OP_TOKENS)})\b")
-
-# Spaces um Binäroperatoren sicherstellen
-_BINOPS_RE = re.compile(
-    r"(?P<L>[A-Za-z0-9}\)])\s*(?P<op>\\(?:odot|oplus|ominus|otimes|cdot|times|cup|cap|land|lor|implies|iff))\s*(?P<R>[A-Za-z0-9({\\])"
-)
-
-def _normalize_latex(s: str) -> str:
-    if not isinstance(s, str):
-        return s
-
-    # 1) harte Artefakte
-    s = s.replace("\u000b", "\\")                 # vertical tab -> backslash
-    s = _ZWSP_LIKE.sub("", s)                     # zero-width entfernen
-
-    # 2) Delimiter entfernen (wir rendern Block separat)
-    s = _LATEX_DOLLARS.sub("", s)
-    s = _LATEX_BRACKETS.sub("", s)
-
-    # 3) Unicode-Operatoren/Zeichen normalisieren
-    s = s.replace("−", "-")                       # Unicode minus -> ASCII
-    for ch, rep in _UNICODE_MAP.items():
-        if ch in s:
-            s = s.replace(ch, rep)
-
-    # 4) Zeilenumbrüche glätten, echte \\ schützen
-    s = s.replace(r"\\", "<<<BR>>>")
-    s = _NEWLINES.sub(" ", s)
-    s = s.replace("<<<BR>>>", r"\\")              # echte LaTeX-Zeilenumbrüche zurück
-
-    # 5) fehlende Backslashes vor bekannten Tokens ergänzen
-    #    (odot, oplus, leq, geq, in, forall, exists, …)
-    s = _TOKENS_RE.sub(r"\\\1", s)
-
-    # 5a) Sonderfall exists! (eindeutiges Existenzquantor)
-    s = re.sub(r"(?<!\\)\bexists!\b", r"\\exists!", s)
-
-    # 5b) 'colon' -> ':' (kommt oft aus OCR/Copy)
-    s = re.sub(r"\bcolon\b", ":", s)
-
-    # 5c) \mathbbR / mathbbR / \mathbb R -> \mathbb{R}
-    s = re.sub(r"(?<!\\)mathbb\s*([A-Za-z])\b", r"\\mathbb{\1}", s)
-    s = re.sub(r"\\mathbb\s*([A-Za-z])\b", r"\\mathbb{\1}", s)
-
-    # 6) \vec x -> \vec{x}
-    s = _LATEX_VEC_SPACE.sub(r"\1{\2}", s)
-
-    # 7) Variable + Zahl(en) -> Hochzahl (x 2 -> x^{2}, x -1 -> x^{-1})
-    #    konservativ, nur Buchstabe gefolgt von optionalem Minus und Ziffern
-    s = re.sub(r"([A-Za-z])\s+(-?[0-9]+)\b", r"\1^{\2}", s)
-
-    # 8) Leerzeichen um Binäroperatoren normalisieren
-    for _ in range(2):
-        s = _BINOPS_RE.sub(r"\g<L> \g<op> \g<R>", s)
-
-    # 9) Mehrfach-Spaces reduzieren
-    s = _WS_MULTI.sub(" ", s).strip()
-    return s
-
-
-def _coerce_topics(raw: str) -> List[Dict[str, Any]]:
-    """
-    Toleranter Parser: entfernt Fences/Trailing Commas, extrahiert Array,
-    nutzt json5-Fallback und normalisiert Sections inkl. LaTeX.
-    """
-    if not raw:
-        return []
-
-    s = _strip_code_fences(raw)
+    s = _strip_code_fences(raw or "")
+    # trailing commas tolerant entfernen (billig)
     s = _JSON_TRAIL_COMMA.sub(r"\1", s)
-    # WICHTIG: keine globale Backslash-Manipulation!
-
     try:
-        parsed = _json5_then_json(s)
+        data = json.loads(s)
+        return data if isinstance(data, list) else []
     except Exception:
-        arr = _extract_json_array(s)
-        if not arr:
-            raise
-        parsed = _json5_then_json(_JSON_TRAIL_COMMA.sub(r"\1", arr))
-
-    if not isinstance(parsed, list):
-        raise ValueError("Expected a JSON array of topic objects.")
-
-    out: List[Dict[str, Any]] = []
-    for t in parsed:
-        if not isinstance(t, dict):
-            continue
-        title = (t.get("title") or "").strip()
-        date = (t.get("date") or _utc_date())[:10]
-        sections = t.get("sections", []) or []
-        clean = []
-        for sct in sections:
-            if not isinstance(sct, dict):
-                continue
-            heading = (sct.get("heading") or "").strip()
-            typ = sct.get("type")
-            content = sct.get("content")
-            if heading and typ in {"text", "list", "latex"} and content is not None:
-                if typ == "latex" and isinstance(content, str):
-                    content = _normalize_latex(content)
-                clean.append({"heading": heading, "type": typ, "content": content})
-        if clean:
-            out.append({"title": title, "date": date, "sections": clean})
-    return out
+        try:
+            data = json5.loads(s)
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
 
 
 # ---------------------------
-# OpenAI Calls (mit Retry & Timeouts)
+# OpenAI Calls (mit Retry & kurzen Timeouts)
 # ---------------------------
 def _chat_complete(model: str, messages: List[Dict[str, str]], timeout: float = 30.0):
     """
     Stabiler Chat-Call mit Backoff-Retries.
+    Keine temperature/max_tokens Params -> maximal kompatibel.
     """
     delay = 0.8
     for attempt in range(4):
@@ -258,81 +113,66 @@ def _chat_complete(model: str, messages: List[Dict[str, str]], timeout: float = 
             delay *= 1.8
 
 
+# ---------------------------
+# Chunk-Verarbeitung (parallel, keine JSON-Validierung/Reformat)
+# ---------------------------
 def call_openai_on_chunks(
     chunks: List[str], model: str, debug: bool = False
 ) -> Tuple[List[Dict[str, Any]], int]:
     """
-    Ruft das Modell chunkweise auf, parst tolerant und macht bei kaputtem JSON
-    einen automatischen Reformat-Retry.
+    Ruft das Modell auf mehreren Chunks PARALLEL auf.
+    Kein Reformat-/Validierungs-Pass: wenn ein Chunk Mist liefert, wird er als [] verworfen.
     """
+    if not chunks:
+        return [], 0
+
     all_topics: List[Dict[str, Any]] = []
     total_tokens = 0
 
     system_msg = {
         "role": "system",
-        "content": (
-            "You are a strict formatter. Respond with a MINIFIED JSON ARRAY only. "
-            "No markdown, no prose, no trailing commas. "
-            "For sections with type \"latex\", output RAW LaTeX WITHOUT $$, \\[, \\], or code fences. "
-            "Use LaTeX only for formulas."
-        ),
+        "content": "Return ONLY a JSON array. No markdown, no prose."
     }
 
-    def _reformat_json_array(bad_content: str) -> List[Dict[str, Any]]:
-        reform_prompt = (
-            "Reformat the following into a STRICT, VALID JSON array that matches the schema:\n"
-            '[{"title":"string","date":"YYYY-MM-DD","sections":['
-            '{"heading":"string","type":"text","content":"string"},'
-            '{"heading":"string","type":"list","content":["item"]},'
-            '{"heading":"string","type":"latex","content":"RAW LaTeX without $$ or \\\\[\\\\]"}]}]\n'
-            "Output JSON only. No markdown, no comments.\n\n"
-            f"{bad_content}"
-        )
-        resp2 = _chat_complete(
-            model=model,
-            messages=[system_msg, {"role": "user", "content": reform_prompt}],
-            timeout=45.0,
-        )
-        fixed = (resp2.choices[0].message.content or "").strip()
-        return _coerce_topics(fixed)
-
-    for i, chunk in enumerate(chunks):
-        summary_prompt = (
+    def _build_prompt(chunk: str) -> str:
+        return (
             "Read the following study content and produce a JSON array of topics. "
-            "Schema:\n"
-            '{"title":"string","date":"YYYY-MM-DD","sections":['
-            '{"heading":"string","type":"text","content":"string"},'
-            '{"heading":"string","type":"list","content":["item"]},'
-            '{"heading":"string","type":"latex","content":"RAW LaTeX without $$ or \\\\[\\\\]"}]}\n'
-            "Return MINIFIED JSON ARRAY only. No markdown. No comments.\n\n"
+            "Each topic has a 'title', 'date' (YYYY-MM-DD), and 'sections' with "
+            "items of type 'text' | 'list' | 'latex'. "
+            "Return ONLY the JSON array.\n\n"
             f"{chunk}"
         )
+
+    def _process_one(idx: int, chunk: str):
         resp = _chat_complete(
             model=model,
-            messages=[system_msg, {"role": "user", "content": summary_prompt}],
-            timeout=60.0,
+            messages=[system_msg, {"role": "user", "content": _build_prompt(chunk)}],
+            timeout=45.0,
         )
         content = (resp.choices[0].message.content or "").strip()
         usage = getattr(resp, "usage", None)
-        if usage and getattr(usage, "total_tokens", None) is not None:
-            total_tokens += int(usage.total_tokens)
+        used = int(getattr(usage, "total_tokens", 0) or 0)
+        topics = _parse_json_array_fast(content)  # << keine Validierung
+        return idx, topics, used
 
-        try:
-            topics = _coerce_topics(content)
-        except Exception:
-            topics = _reformat_json_array(content)
-
-        if topics:
-            all_topics.extend(topics)
-
-        if debug:
-            print(f"[chunk {i+1}] topics_added={len(topics)} total={len(all_topics)}")
+    workers = min(max(1, OPENAI_CONCURRENCY), len(chunks))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(_process_one, i, ch) for i, ch in enumerate(chunks)]
+        for fut in as_completed(futures):
+            idx, topics, used = fut.result()
+            total_tokens += used
+            if topics:
+                # topics ist eine Liste beliebiger Objekte; wir gehen von Dicts aus,
+                # validieren aber bewusst NICHT (Speed).
+                all_topics.extend(topics)
+            if debug:
+                print(f"[chunk {idx+1}] topics_added={len(topics)} total={len(all_topics)} used_tokens={used}")
 
     return all_topics, total_tokens
 
 
 # ---------------------------
-# Utility: Sections mergen
+# Utility: Sections mergen (für Cards/Quiz/Summary)
 # ---------------------------
 def _merge_sections_text(summary: List[Dict[str, Any]]) -> str:
     """
@@ -340,9 +180,9 @@ def _merge_sections_text(summary: List[Dict[str, Any]]) -> str:
     damit das Modell Kontext behält, ohne Blockumgebungen zu erzeugen.
     """
     merged: List[str] = []
-    for s in summary:
-        content = s.get("content")
-        typ = s.get("type")
+    for s in summary or []:
+        content = s.get("content") if isinstance(s, dict) else None
+        typ = s.get("type") if isinstance(s, dict) else None
         if isinstance(content, list):
             seg = "\n".join(str(x) for x in content)
         elif content is not None:
@@ -356,54 +196,27 @@ def _merge_sections_text(summary: List[Dict[str, Any]]) -> str:
 
 
 def _chat_json_array(model: str, prompt: str, timeout: float = 45.0):
-    system_msg = {
-        "role": "system",
-        "content": "Respond with JSON only. No markdown. No comments."
-    }
+    """
+    Einfacher Helper: fragt JSON-Array ab, parst minimal ohne Validierung.
+    """
+    system_msg = {"role": "system", "content": "Return ONLY a JSON array."}
     resp = _chat_complete(model=model, messages=[system_msg, {"role": "user", "content": prompt}], timeout=timeout)
     raw = (resp.choices[0].message.content or "").strip()
-    # tolerant parse
-    try:
-        return json.loads(_strip_code_fences(_JSON_TRAIL_COMMA.sub(r"\1", raw)))
-    except json.JSONDecodeError:
-        return json5.loads(_strip_code_fences(_JSON_TRAIL_COMMA.sub(r"\1", raw)))
+    return _parse_json_array_fast(raw)
 
 
 # ---------------------------
-# Karten & Quiz (mit Reformat-Fallback)
+# Karten & Quiz (ohne Validierung)
 # ---------------------------
 def generate_study_cards_json_from_summary(summary, model="gpt-5-nano-2025-08-07", debug: bool = False):
     merged_text = _merge_sections_text(summary)
     prompt = (
         "Create 5 flashcards as a JSON array of objects with fields 'question' and 'answer'. "
-        'Return only: [{"question":"string","answer":"string"}]\n\n'
+        "Return ONLY the JSON array.\n\n"
         f"{merged_text}"
     )
-    try:
-        data = _chat_json_array(model=model, prompt=prompt, timeout=45.0)
-        if not isinstance(data, list):
-            raise ValueError("Not an array")
-        out = []
-        for it in data:
-            q = (it.get("question") or "").strip()
-            a = (it.get("answer") or "").strip()
-            if q and a:
-                out.append({"question": q, "answer": a})
-        if out:
-            return out
-        raise ValueError("Empty after validation")
-    except Exception:
-        # Reformat-Fallback (billig & robust)
-        reform = (
-            "Reformat to a STRICT JSON array of objects with shape "
-            '[{"question":"string","answer":"string"}]. Output JSON only.\n\n'
-            f"{merged_text}"
-        )
-        try:
-            fixed = _chat_json_array(model=model, prompt=reform, timeout=45.0)
-            return fixed if isinstance(fixed, list) else []
-        except Exception:
-            return []
+    data = _chat_json_array(model=model, prompt=prompt, timeout=45.0)
+    return data if isinstance(data, list) else []
 
 
 def generate_quiz_from_summary(summary, model="gpt-5-nano-2025-08-07", debug: bool = False):
@@ -411,34 +224,65 @@ def generate_quiz_from_summary(summary, model="gpt-5-nano-2025-08-07", debug: bo
     prompt = (
         "Generate 5 multiple choice questions as JSON. Each item has 'question', "
         "'options' (array of 4 strings), and 'correct_answer' (one of the options). "
-        'Return only: [{"question":"...","options":["A","B","C","D"],"correct_answer":"A"}]\n\n'
+        "Return ONLY the JSON array.\n\n"
         f"{merged_text}"
     )
+    data = _chat_json_array(model=model, prompt=prompt, timeout=60.0)
+    return data if isinstance(data, list) else []
+
+
+# ---------------------------
+# (Optional) Kompakte Text-Summary aus structured Topics
+# ---------------------------
+def _collect_sections_from_structured(structured: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    sections: List[Dict[str, Any]] = []
+    for t in structured or []:
+        secs = t.get("sections") if isinstance(t, dict) else None
+        if isinstance(secs, list):
+            sections.extend(secs)
+    return sections
+
+def generate_text_summary_from_structured(
+    structured: List[Dict[str, Any]],
+    *,
+    model: str = "gpt-5-nano-2025-08-07",
+    target_words: int = 200,
+) -> str:
+    """
+    Baut eine kompakte, prüfungsorientierte Zusammenfassung (Deutsch) aus structured Topics.
+    Kein JSON, daher robust gegenüber Model-Param-Einschränkungen.
+    """
     try:
-        data = _chat_json_array(model=model, prompt=prompt, timeout=60.0)
-        if not isinstance(data, list):
-            raise ValueError("Not an array")
-        out = []
-        for it in data:
-            q = (it.get("question") or "").strip()
-            opts = it.get("options") or []
-            ca = (it.get("correct_answer") or "").strip()
-            if q and isinstance(opts, list) and len(opts) == 4 and ca in opts:
-                out.append({"question": q, "options": opts, "correct_answer": ca})
-        if out:
-            return out
-        raise ValueError("Empty after validation")
-    except Exception:
-        # Reformat-Fallback
-        reform = (
-            "Reformat to a STRICT JSON array with items of shape "
-            '{"question":"string","options":["A","B","C","D"],"correct_answer":"one of options"}. '
-            "Output JSON only.\n\n"
-            f"{merged_text}"
+        sections = _collect_sections_from_structured(structured)
+        merged = _merge_sections_text(sections)
+
+        system_msg = {
+            "role": "system",
+            "content": "Du schreibst prägnante, prüfungsorientierte Zusammenfassungen auf Deutsch. Keine Aufzählungen, Fließtext.",
+        }
+        user_msg = {
+            "role": "user",
+            "content": (
+                f"Erstelle eine kompakte Zusammenfassung ({target_words}–{int(target_words*1.3)} Wörter). "
+                "Nur die Kernaussagen, keine Einleitung, kein Fazit, keine Überschriften. "
+                "Wenn Formeln vorkommen, kurz erklären (max. 1 Satz pro Formel). "
+                "Textbasis:\n\n"
+                f"{merged}"
+            ),
+        }
+
+        resp = _chat_complete(
+            model=model,
+            messages=[system_msg, user_msg],
+            timeout=28.0,
         )
+        text = (resp.choices[0].message.content or "").strip()
+        text = re.sub(r"\s+\n", "\n", text).strip()
+        return text if text else merged[:1200]
+    except Exception:
         try:
-            fixed = _chat_json_array(model=model, prompt=reform, timeout=60.0)
-            # nicht nochmal validieren – Frontend kann anzeigen
-            return fixed if isinstance(fixed, list) else []
+            sections = _collect_sections_from_structured(structured)
+            merged = _merge_sections_text(sections)
+            return merged[:1200]
         except Exception:
-            return []
+            return ""
