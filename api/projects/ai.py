@@ -35,26 +35,28 @@ def _utc_date() -> str:
 # Modelwahl (keine Extra-Roundtrips)
 # ---------------------------
 def _is_complex_topic_cheap(text: str) -> bool:
-
+    """Cheap boolean classifier: True if the text is complex, else False."""
     snippet = (text or "")[:1500]
-
     try:
         resp = client.chat.completions.create(
             model="gpt-5-nano-2025-08-07",
             messages=[
-                {"role": "system", "content": "Answer only 'True' or 'False'."},
-                {"role": "user", "content": f"Is this text complex (math, law, algorithms, dense)?\n\n{snippet}"}
+                {"role": "system", "content": "You are a binary classifier. Answer only 'true' or 'false'."},
+                {"role": "user", "content": (
+                    "Does this text require advanced reasoning (e.g., heavy math, formal proofs, dense law, "
+                    "algorithms, symbolic notation)? Answer true or false.\n\n"
+                    f"{snippet}"
+                )},
             ],
             max_tokens=1,
             temperature=0,
         )
-        answer = resp.choices[0].message.content.strip().lower()
-        if "complex" in answer:
-            return "gpt-5-mini-2025-08-07"
-        return "gpt-5-nano-2025-08-07"
-    except Exception as e:
-        # Fallback: wenn API nicht klappt, default nano
-        return "gpt-5-nano-2025-08-07"
+        answer = (resp.choices[0].message.content or "").strip().lower()
+        # treat anything starting with 't' as true (robust to capitalization/whitespace)
+        return answer.startswith("t")
+    except Exception:
+        # On any failure, default to non-complex to avoid over-using the mini model
+        return False
 
 
 def choose_model_for_summary(plan: str, text: str, page_count: int) -> str:
@@ -118,7 +120,7 @@ def _chat_complete(model: str, messages: List[Dict[str, str]], timeout: float = 
 # Chunk-Verarbeitung (parallel, keine JSON-Validierung/Reformat)
 # ---------------------------
 def call_openai_on_chunks(
-    chunks: List[str], model: str, debug: bool = False
+    chunks: List[str], model: str, debug: bool = False, **opts
 ) -> Tuple[List[Dict[str, Any]], int]:
     
     if not chunks:
@@ -127,16 +129,36 @@ def call_openai_on_chunks(
     all_topics: List[Dict[str, Any]] = []
     total_tokens = 0
 
+    # NEU: Zusatzoptionen aus views.py/Frontend
+    summary_variant = opts.get("summary_variant")  # "small" | "medium" | "big" | None
+    min_pages = opts.get("min_pages")
+    max_pages = opts.get("max_pages")
+
+    # NEU: kompakte Vorgabe für den Prompt (keine Logik, nur Hinweise)
+    target_hint_parts = []
+    if summary_variant:
+        target_hint_parts.append(f"Summary variant: {summary_variant}.")
+    if isinstance(min_pages, int) and isinstance(max_pages, int):
+        target_hint_parts.append(
+            f"Target length: aim for {min_pages}-{max_pages} pages total across all topics."
+        )
+    target_hint_parts.append(
+        "Be as concise or as detailed as needed to meet the target length. Prioritize exam-relevant content."
+    )
+    target_hint = " ".join(target_hint_parts).strip()
+
     system_msg = {
         "role": "system",
         "content": "Return ONLY a JSON array. No markdown, no prose."
     }
 
     def _build_prompt(chunk: str) -> str:
+        # NEU: target_hint voranstellen
         return (
-            "Read the following study content and produce a JSON array of topics. Write only the most relevant topics for exams. Answer only in the same langauge as the input"
-            "Each topic has a 'title' and 'sections' with "
-            "items of type 'text' | 'list' | 'latex'. "
+            (target_hint + "\n\n" if target_hint else "") +
+            "Read the following study content and produce a JSON array of topics. "
+            "Write only the most relevant topics for exams. Answer only in the same language as the input. "
+            "Each topic has a 'title' and 'sections' with items of type 'text' | 'list' | 'latex'. "
             "Return ONLY the JSON array.\n\n"
             f"{chunk}"
         )
@@ -150,7 +172,7 @@ def call_openai_on_chunks(
         content = (resp.choices[0].message.content or "").strip()
         usage = getattr(resp, "usage", None)
         used = int(getattr(usage, "total_tokens", 0) or 0)
-        topics = _parse_json_array_fast(content) 
+        topics = _parse_json_array_fast(content)
         return idx, topics, used
 
     workers = min(max(1, OPENAI_CONCURRENCY), len(chunks))
@@ -160,8 +182,6 @@ def call_openai_on_chunks(
             idx, topics, used = fut.result()
             total_tokens += used
             if topics:
-                # topics ist eine Liste beliebiger Objekte; wir gehen von Dicts aus,
-                # validieren aber bewusst NICHT (Speed).
                 all_topics.extend(topics)
             if debug:
                 print(f"[chunk {idx+1}] topics_added={len(topics)} total={len(all_topics)} used_tokens={used}")

@@ -38,7 +38,7 @@ PLAN_RULES = {
     PRIME: {
         "max_pages": 80,
         "monthly_limit": 180,
-        # dynamisch je nach Komplexität via choose_model_for_summary
+        
     },
 }
 
@@ -49,7 +49,9 @@ class GenerateProjectIn(serializers.Serializer):
     text = serializers.CharField(allow_blank=False, trim_whitespace=True)
     name = serializers.CharField(allow_blank=False, trim_whitespace=True, max_length=120)
     page_count = serializers.IntegerField(required=False, min_value=0, default=0)
-
+    summary_variant = serializers.ChoiceField(choices=("small", "medium", "big"), required=True)
+    min_pages = serializers.IntegerField(required=False, allow_null=True)
+    max_pages = serializers.IntegerField(required=False, allow_null=True)
 
 class ProjectActionIn(serializers.Serializer):
     name = serializers.CharField(allow_blank=False, trim_whitespace=True, max_length=120)
@@ -158,6 +160,18 @@ def generate_project(request):
     inp = GenerateProjectIn(data=request.data)
     if not inp.is_valid():
         return Response({"error": inp.errors}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    
+    variant = inp.validated_data.get("summary_variant")  
+    min_pages = inp.validated_data.get("min_pages")
+    max_pages = inp.validated_data.get("max_pages")
+
+    if min_pages is None or max_pages is None:
+        if variant == "small":
+            min_pages, max_pages = 5, 10
+        elif variant == "medium":
+            min_pages, max_pages = 11, 20
+        else:  
+            min_pages, max_pages = 25, 35
 
     text = inp.validated_data["text"].strip()
     name = inp.validated_data["name"].strip()
@@ -179,10 +193,18 @@ def generate_project(request):
     # Modellwahl
     model = choose_model_for_summary(plan=plan, text=text, page_count=page_count)
 
+    variant = inp.validated_data.get("summary_variant")
+    min_pages = inp.validated_data.get("min_pages")
+    max_pages = inp.validated_data.get("max_pages")
+
+
     # Chunking + OpenAI
     chunks = split_into_chunks(text, max_tokens=2000, model_hint=model)
     try:
-        structured_summary, total_tokens = call_openai_on_chunks(chunks, model=model, debug=False)
+        structured_summary, total_tokens = call_openai_on_chunks(chunks, model=model, debug=False,  
+        summary_variant=variant,
+        min_pages=min_pages,
+        max_pages=max_pages,)
     except Exception as e:
         # Rollback der Upload-Erhöhung ist hier i.d.R. nicht notwendig/üblich. Wir loggen nur sauber.
         return Response({"error": f"AI processing failed: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)

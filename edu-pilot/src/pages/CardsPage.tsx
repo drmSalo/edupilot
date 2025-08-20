@@ -1,9 +1,8 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState} from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { FaArrowLeft } from "react-icons/fa";
-import gsap from "gsap";
 
 import "katex/dist/katex.min.css";
 import ReactMarkdown from "react-markdown";
