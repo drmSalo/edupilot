@@ -178,12 +178,12 @@ function App() {
               }
             >
               <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/projects/:name" element={<FolderPage />} />
-              <Route path="/summary/:name" element={<SummaryPage />} />
+              <Route path="/projects/:id" element={<FolderPage />} />
+              <Route path="/summary/:id" element={<SummaryPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/plans" element={<PlansPage />} />
-              <Route path="/cards/:name" element={<CardsPage />} />
-              <Route path="/test/:name" element={<TestPage/>}/>
+              <Route path="/cards/:id" element={<CardsPage />} />
+              <Route path="/test/:id" element={<TestPage/>}/>
             </Route>
           </Routes>
         </main>

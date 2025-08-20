@@ -3,8 +3,8 @@ import { useEffect, useState } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { FaArrowLeft, FaCheckCircle } from "react-icons/fa";
-import { getAuth } from "firebase/auth";
 import { COLORS } from "../customSections/HeroSection";
+import { useAuth } from "../context/AuthContext";
 
 interface QuizQuestion {
   question: string;
@@ -13,43 +13,55 @@ interface QuizQuestion {
 }
 
 function TestPage() {
-  const { name } = useParams<{ name: string }>();
+  // ID-basiert (Route: /test/:id)
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
+
   const [loading, setLoading] = useState(true);
   const [quiz, setQuiz] = useState<QuizQuestion[] | null>(null);
+  const [projectName, setProjectName] = useState<string>("");
 
   useEffect(() => {
-    const fetchQuiz = async () => {
-      const user = getAuth().currentUser;
-      const uid = user?.uid;
+    let mounted = true;
 
-      if (!uid || !name) {
-        console.warn("Missing UID or name, aborting fetch.");
-        setLoading(false);
+    const fetchQuiz = async () => {
+      if (!currentUser || !id) {
+        if (mounted) setLoading(false);
         return;
       }
-
       try {
-        const docRef = doc(db, "users", uid, "projects", name);
-        const docSnap = await getDoc(docRef);
+        const ref = doc(db, "users", currentUser.uid, "projects", id);
+        const snap = await getDoc(ref);
 
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setQuiz((data as any).quiz || []);
+        if (!mounted) return;
+
+        if (snap.exists()) {
+          const data = snap.data() as any;
+          setQuiz(Array.isArray(data.quiz) ? data.quiz : []);
+          setProjectName(typeof data.name === "string" ? data.name : id);
         } else {
-          console.warn("No document found for this user/project.");
           setQuiz([]);
+          setProjectName(id);
         }
       } catch (err) {
         console.error("Failed to fetch quiz:", err);
-        setQuiz([]);
+        if (mounted) {
+          setQuiz([]);
+          setProjectName(id || "");
+        }
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
+    setLoading(true);
     fetchQuiz();
-  }, [name]);
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentUser, id]);
 
   return (
     <div
@@ -81,7 +93,7 @@ function TestPage() {
           </button>
 
           <h1 className="mt-4 text-3xl font-extrabold tracking-tight">
-            Test: <span style={{ color: COLORS.PRIMARY }}>{name}</span>
+            Test: <span style={{ color: COLORS.PRIMARY }}>{projectName || "—"}</span>
           </h1>
 
           <div
@@ -140,9 +152,7 @@ function TestPage() {
                           className="flex items-center gap-3 rounded-xl px-4 py-2"
                           style={{
                             background: isCorrect ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.03)",
-                            border: `1px solid ${
-                              isCorrect ? "rgba(34,197,94,0.45)" : COLORS.BORDER
-                            }`,
+                            border: `1px solid ${isCorrect ? "rgba(34,197,94,0.45)" : COLORS.BORDER}`,
                           }}
                         >
                           {isCorrect ? (
@@ -159,7 +169,6 @@ function TestPage() {
                     })}
                   </ul>
 
-                  {/* Bottom accent */}
                   <div
                     aria-hidden
                     className="mt-4 h-[2px] w-full opacity-70"

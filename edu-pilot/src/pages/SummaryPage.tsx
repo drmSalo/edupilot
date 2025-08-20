@@ -4,39 +4,56 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { FaArrowLeft } from "react-icons/fa";
 import { StructuredList } from "../components/StructuredBlock";
-import { getAuth } from "firebase/auth";
+import { useAuth } from "../context/AuthContext";
 import { COLORS } from "../customSections/HeroSection";
 
 function SummaryPage() {
-  const { name } = useParams<{ name: string }>();
+  // ID-basiert (nach Umstellung der Routes)
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
+
   const [loading, setLoading] = useState(true);
-  const [structured, setStructured] = useState<any | null>(null);
+  const [structured, setStructured] = useState<any[] | null>(null);
+  const [projectName, setProjectName] = useState<string>("");
 
   useEffect(() => {
+    let mounted = true;
+
     const fetchSummary = async () => {
-      const user = getAuth().currentUser;
-      const uid = user?.uid;
-
-      if (!uid || !name) return;
-
+      if (!currentUser || !id) return;
       try {
-        const docRef = doc(db, "users", uid, "projects", name);
-        const docSnap = await getDoc(docRef);
+        const ref = doc(db, "users", currentUser.uid, "projects", id);
+        const snap = await getDoc(ref);
 
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setStructured(data.structured || null);
+        if (!mounted) return;
+
+        if (snap.exists()) {
+          const data = snap.data() as any;
+          setStructured(Array.isArray(data.structured) ? data.structured : null);
+          setProjectName(typeof data.name === "string" ? data.name : id);
+        } else {
+          setStructured(null);
+          setProjectName(id);
         }
       } catch (err) {
         console.error("Failed to fetch summary:", err);
+        if (mounted) {
+          setStructured(null);
+          setProjectName(id);
+        }
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
+    setLoading(true);
     fetchSummary();
-  }, [name]);
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentUser, id]);
 
   return (
     <div
@@ -68,7 +85,7 @@ function SummaryPage() {
           </button>
 
           <h1 className="mt-4 text-3xl font-extrabold tracking-tight">
-            Summary: <span style={{ color: COLORS.PRIMARY }}>{name}</span>
+            Summary: <span style={{ color: COLORS.PRIMARY }}>{projectName || "—"}</span>
           </h1>
 
           <div

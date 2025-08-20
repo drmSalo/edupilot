@@ -9,7 +9,7 @@ import { AuthProvider } from './context/AuthContext.tsx'; // 🔥 hinzufügen
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Provider store={store}>
-      <AuthProvider> {/* 🔐 Um App legen */}
+      <AuthProvider> 
         <App />
       </AuthProvider>
     </Provider>

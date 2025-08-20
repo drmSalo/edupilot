@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { collection, getDocs, query } from "firebase/firestore";
 import { FaFolder, FaSpinner } from "react-icons/fa";
@@ -17,7 +24,10 @@ import { COLORS } from "../customSections/HeroSection";
 
 gsap.registerPlugin(ScrollTrigger);
 
-interface Project { id: string; name: string; }
+interface Project {
+  id: string;
+  name: string;
+}
 
 export default function ProjectsPage(): JSX.Element {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -53,11 +63,19 @@ export default function ProjectsPage(): JSX.Element {
       setLoading(true);
       setError(null);
       try {
-        if (!currentUser) { setProjects([]); return; }
-        const qRef = query(collection(db, "users", currentUser.uid, "projects"));
+        if (!currentUser) {
+          setProjects([]);
+          return;
+        }
+        const qRef = query(
+          collection(db, "users", currentUser.uid, "projects")
+        );
         const snap = await getDocs(qRef);
         if (!mounted) return;
-        const list: Project[] = snap.docs.map((d) => ({ id: d.id, name: (d.data() as any).name || d.id }));
+        const list: Project[] = snap.docs.map((d) => ({
+          id: d.id,
+          name: (d.data() as any).name || d.id,
+        }));
         setProjects(list);
       } catch (e: any) {
         console.error("Error loading projects:", e);
@@ -67,7 +85,9 @@ export default function ProjectsPage(): JSX.Element {
       }
     };
     load();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [currentUser, refresh]);
 
   // Header anim
@@ -78,7 +98,13 @@ export default function ProjectsPage(): JSX.Element {
         gsap.fromTo(
           headerRef.current,
           { y: 24, opacity: 0, filter: "blur(2px)" },
-          { y: 0, opacity: 1, filter: "blur(0px)", duration: 0.6, ease: "power3.out" }
+          {
+            y: 0,
+            opacity: 1,
+            filter: "blur(0px)",
+            duration: 0.6,
+            ease: "power3.out",
+          }
         );
       }
     }, rootRef);
@@ -91,33 +117,56 @@ export default function ProjectsPage(): JSX.Element {
     const ctx = gsap.context(() => {
       const cards = cardRefs.current.filter(Boolean) as HTMLDivElement[];
       if (gridRef.current) {
-        gsap.fromTo(gridRef.current, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" });
+        gsap.fromTo(
+          gridRef.current,
+          { opacity: 0 },
+          { opacity: 1, duration: 0.25, ease: "power2.out" }
+        );
       }
       if (cards.length) {
-        gsap.set(cards, { y: 24, opacity: 0, rotateX: -3, transformOrigin: "center 100%" });
-        gsap.to(cards, { y: 0, opacity: 1, rotateX: 0, duration: 0.5, ease: "power3.out", stagger: 0.06, delay: 0.05 });
+        gsap.set(cards, {
+          y: 24,
+          opacity: 0,
+          rotateX: -3,
+          transformOrigin: "center 100%",
+        });
+        gsap.to(cards, {
+          y: 0,
+          opacity: 1,
+          rotateX: 0,
+          duration: 0.5,
+          ease: "power3.out",
+          stagger: 0.06,
+          delay: 0.05,
+        });
       }
     }, rootRef);
     return () => ctx.revert();
   }, [loading, projects.length, prefersReducedMotion]);
 
-  const handleCreateProject = useCallback(async (name: string): Promise<{ id: string; name: string } | null> => {
-    try {
-      const id = await createProject(name);
-      if (!id) return null;
-      dispatch(triggerRefresh());
-      return { id, name };
-    } catch (err) {
-      console.error("Error creating project:", err);
-      return null;
-    }
-  }, [createProject, dispatch]);
+  const handleCreateProject = useCallback(
+    async (name: string): Promise<{ id: string; name: string } | null> => {
+      try {
+        const id = await createProject(name);
+        if (!id) return null;
+        dispatch(triggerRefresh());
+        return { id, name };
+      } catch (err) {
+        console.error("Error creating project:", err);
+        return null;
+      }
+    },
+    [createProject, dispatch]
+  );
 
   // Keyboard support for cards
-  const onCardKeyDown = (e: React.KeyboardEvent<HTMLDivElement>, name: string) => {
+  const onCardKeyDown = (
+    e: React.KeyboardEvent<HTMLDivElement>,
+    id: string
+  ) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      navigate(`/projects/${encodeURIComponent(name)}`);
+      navigate(`/projects/${id}`);
     }
   };
 
@@ -160,12 +209,20 @@ export default function ProjectsPage(): JSX.Element {
         <div
           ref={headerRef}
           className="sticky top-0 z-10 backdrop-blur-md"
-          style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0))" }}
+          style={{
+            background:
+              "linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0))",
+          }}
         >
           <div className="mx-auto max-w-7xl px-4 py-6 flex items-center justify-between">
             <div>
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Projects</h2>
-              <p className="text-xs sm:text-sm mt-1" style={{ color: COLORS.SUBTLE }}>
+              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                Projects
+              </h2>
+              <p
+                className="text-xs sm:text-sm mt-1"
+                style={{ color: COLORS.SUBTLE }}
+              >
                 Deine PDFs, Karten & Prüfungsfragen auf einen Blick.
               </p>
             </div>
@@ -186,7 +243,9 @@ export default function ProjectsPage(): JSX.Element {
           <div
             aria-hidden
             className="h-[2px] w-full"
-            style={{ backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT2}, ${COLORS.ACCENT})` }}
+            style={{
+              backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT2}, ${COLORS.ACCENT})`,
+            }}
           />
         </div>
 
@@ -223,8 +282,18 @@ export default function ProjectsPage(): JSX.Element {
                     backdropFilter: "blur(10px)",
                   }}
                 >
-                  <div className="text-2xl font-black" style={{ color: COLORS.PRIMARY }}>{s.k}</div>
-                  <div className="text-xs mt-1" style={{ color: COLORS.SUBTLE }}>{s.v}</div>
+                  <div
+                    className="text-2xl font-black"
+                    style={{ color: COLORS.PRIMARY }}
+                  >
+                    {s.k}
+                  </div>
+                  <div
+                    className="text-xs mt-1"
+                    style={{ color: COLORS.SUBTLE }}
+                  >
+                    {s.v}
+                  </div>
                 </div>
               ))}
             </div>
@@ -235,7 +304,11 @@ export default function ProjectsPage(): JSX.Element {
             <div className="pt-2">
               <Skeleton />
               <div className="flex items-center justify-center py-6">
-                <FaSpinner className="animate-spin text-2xl" style={{ color: COLORS.PRIMARY }} aria-label="Loading" />
+                <FaSpinner
+                  className="animate-spin text-2xl"
+                  style={{ color: COLORS.PRIMARY }}
+                  aria-label="Loading"
+                />
               </div>
             </div>
           ) : projects.length === 0 ? (
@@ -248,7 +321,9 @@ export default function ProjectsPage(): JSX.Element {
                   boxShadow: `0 0 80px ${COLORS.PRIMARY}22`,
                 }}
               />
-              <h3 className="text-xl sm:text-2xl font-bold mb-2">Noch keine Projekte</h3>
+              <h3 className="text-xl sm:text-2xl font-bold mb-2">
+                Noch keine Projekte
+              </h3>
               <p className="text-sm mb-6" style={{ color: COLORS.SUBTLE }}>
                 Erstelle dein erstes Projekt und lade ein PDF hoch.
               </p>
@@ -273,9 +348,11 @@ export default function ProjectsPage(): JSX.Element {
                 {projects.map((project, idx) => (
                   <div
                     key={project.id}
-                    ref={(el) => { cardRefs.current[idx] = el; }}
-                    onClick={() => navigate(`/projects/${encodeURIComponent(project.name)}`)}
-                    onKeyDown={(e) => onCardKeyDown(e, project.name)}
+                    ref={(el) => {
+                      cardRefs.current[idx] = el;
+                    }}
+                    onClick={() => navigate(`/projects/${project.id}`)}
+                    onKeyDown={(e) => onCardKeyDown(e, project.id)}
                     role="button"
                     tabIndex={0}
                     aria-label={`Open project ${project.name}`}
@@ -289,11 +366,19 @@ export default function ProjectsPage(): JSX.Element {
                     }}
                     onMouseEnter={(e) => {
                       if (prefersReducedMotion) return;
-                      gsap.to(e.currentTarget, { y: -4, duration: 0.18, ease: "power2.out" });
+                      gsap.to(e.currentTarget, {
+                        y: -4,
+                        duration: 0.18,
+                        ease: "power2.out",
+                      });
                     }}
                     onMouseLeave={(e) => {
                       if (prefersReducedMotion) return;
-                      gsap.to(e.currentTarget, { y: 0, duration: 0.18, ease: "power2.out" });
+                      gsap.to(e.currentTarget, {
+                        y: 0,
+                        duration: 0.18,
+                        ease: "power2.out",
+                      });
                     }}
                   >
                     <div className="relative mb-3">
@@ -306,13 +391,15 @@ export default function ProjectsPage(): JSX.Element {
                         style={{ background: `${COLORS.PRIMARY}22` }}
                       />
                     </div>
-                    <span className="line-clamp-2 break-words text-center text-sm" style={{ color: COLORS.TEXT }}>
+                    <span
+                      className="line-clamp-2 break-words text-center text-sm"
+                      style={{ color: COLORS.TEXT }}
+                    >
                       {project.name}
                     </span>
                     <div
                       aria-hidden
                       className="absolute left-0 right-0 bottom-0 h-[2px] opacity-50"
-                      
                     />
                   </div>
                 ))}
@@ -323,7 +410,10 @@ export default function ProjectsPage(): JSX.Element {
       </main>
 
       {showModal && (
-        <CustomModal setShowModal={setShowModal} onCreate={handleCreateProject} />
+        <CustomModal
+          setShowModal={setShowModal}
+          onCreate={handleCreateProject}
+        />
       )}
     </div>
   );

@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { FaArrowLeft } from "react-icons/fa";
-import { getAuth } from "firebase/auth";
 import gsap from "gsap";
 
 import "katex/dist/katex.min.css";
@@ -13,7 +12,8 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { PluggableList } from "unified";
-import { COLORS } from "../customSections/HeroSection"; // Design-Palette
+import { COLORS } from "../customSections/HeroSection";
+import { useAuth } from "../context/AuthContext";
 
 interface Card {
   question: string;
@@ -53,177 +53,119 @@ function MarkdownWithMath({ text, className }: { text: string; className?: strin
   );
 }
 
-/* --- Helpers --- */
-function safeId(name: string) {
-  const base = name.trim().toLowerCase();
-  const slug = base
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-");
-  return (slug || base.replace(/\W+/g, "-")).slice(0, 120);
-}
-
-/* --- FlipCard Component (nur Design geändert) --- */
+/* --- FlipCard --- */
 function FlipCard({ index, question, answer }: { index: number; question: string; answer: string }) {
   const [flipped, setFlipped] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const innerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!wrapperRef.current || !innerRef.current) return;
-    gsap.set(wrapperRef.current, { perspective: 1200 });
-    gsap.set(innerRef.current, { rotateY: 0 });
-  }, []);
-
-  useEffect(() => {
-    if (!innerRef.current) return;
-    gsap.to(innerRef.current, {
-      rotateY: flipped ? 180 : 0,
-      duration: 0.55,
-      ease: "power3.inOut",
-    });
-  }, [flipped]);
-
-  const toggle = () => setFlipped(v => !v);
 
   return (
     <div
-      ref={wrapperRef}
-      className="group relative h-48 sm:h-56 md:h-64 cursor-pointer select-none"
-      role="button"
-      aria-pressed={flipped}
-      tabIndex={0}
-      onClick={toggle}
-      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && toggle()}
-      style={{ perspective: 1200 }}
+      className="relative h-48 sm:h-56 md:h-64 cursor-pointer select-none"
+      style={{ perspective: 1000, overflow: "hidden" }} // wichtig
+      onClick={() => setFlipped(!flipped)}
     >
-      {/* WICHTIG: KEIN backdropFilter HIER */}
       <div
-        ref={innerRef}
-        className="absolute inset-0 rounded-2xl transition-transform will-change-transform"
+        className="absolute inset-0 rounded-2xl transition-transform duration-500"
         style={{
           transformStyle: "preserve-3d",
-          // Nur eine dünne Outline/Shadow auf dem Flipper selbst:
-          border: "1px solid rgba(255,255,255,0.08)",
-          boxShadow: "0 10px 40px -20px rgba(0,0,0,0.7)",
-          overflow: "hidden",
+          transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
         }}
       >
         {/* FRONT */}
         <div
-          className="absolute inset-0 rounded-2xl p-5 flex flex-col justify-center"
+          className="absolute inset-0 rounded-2xl p-4 flex flex-col justify-center overflow-hidden"
           style={{
-            transform: "rotateY(0deg) translateZ(0)",   // zwingt eigenes 3D-Layer
-            WebkitBackfaceVisibility: "hidden",
             backfaceVisibility: "hidden",
-            // Glas-Optik AUF DER SEITE, nicht auf dem Flipper:
-            background: "rgba(17,24,39,0.85)",          // #111827 @ 85%
-            // kein backdropFilter hier, um Safari/Chrome-Bugs zu vermeiden
+            background: "rgba(17,24,39,0.85)",
+            border: `1px solid ${COLORS.BORDER}`,
           }}
         >
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs font-semibold tracking-wider" style={{ color: COLORS.PRIMARY }}>
-              Q{index + 1}
-            </div>
-            <div className="text-[10px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition" style={{ color: COLORS.SUBTLE }}>
-              Click to reveal
-            </div>
+          <div className="text-xs font-semibold mb-2" style={{ color: COLORS.PRIMARY }}>
+            Q{index + 1}
           </div>
-
-          <MarkdownWithMath text={question} className="prose prose-invert max-w-none text-base" />
-
-          <div
-            aria-hidden
-            className="absolute left-0 right-0 bottom-0 h-[2px] opacity-70"
-            style={{ backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT2}, ${COLORS.ACCENT})` }}
+          <MarkdownWithMath
+            text={question}
+            className="prose prose-invert max-w-full text-sm break-words"
           />
+          <p className="text-xs text-right text-gray-500 mt-4">Click To Reveal the Answer</p>
         </div>
 
         {/* BACK */}
         <div
-          className="absolute inset-0 rounded-2xl p-5 flex flex-col justify-center"
+          className="absolute inset-0 rounded-2xl p-4 flex flex-col justify-center overflow-hidden"
           style={{
-            transform: "rotateY(180deg) translateZ(0)",
-            WebkitBackfaceVisibility: "hidden",
             backfaceVisibility: "hidden",
-            background: "rgba(17,24,39,0.90)",          // leicht anders für Kontrast
-            borderTop: "1px solid rgba(255,255,255,0.08)",
+            transform: "rotateY(180deg)",
+            background: "rgba(17,24,39,0.9)",
+            border: `1px solid ${COLORS.BORDER}`,
           }}
         >
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs font-semibold tracking-wider" style={{ color: "#fff" }}>
-              Answer
-            </div>
-            <div className="text-[10px] uppercase tracking-wider opacity-0 group-hover:opacity-100 transition" style={{ color: COLORS.SUBTLE }}>
-              Click to flip back
-            </div>
+          <div className="text-xs font-semibold mb-2" style={{ color: COLORS.ACCENT }}>
+            Answer
           </div>
-
-          <MarkdownWithMath text={answer} className="prose max-w-none text-base" />
-
-          <div
-            aria-hidden
-            className="absolute left-0 right-0 bottom-0 h-[2px] opacity-70"
-            style={{ backgroundImage: `linear-gradient(90deg, ${COLORS.ACCENT}, ${COLORS.ACCENT2}, ${COLORS.PRIMARY})` }}
+          <MarkdownWithMath
+            text={answer}
+            className="prose prose-invert max-w-full text-sm break-words"
           />
         </div>
-
-        {/* Hover Glow */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute -inset-[1px] rounded-2xl opacity-0 group-hover:opacity-100 blur transition-opacity"
-          style={{ background: `${COLORS.PRIMARY}22` }}
-        />
       </div>
     </div>
   );
 }
 
 
-
-
-/* --- Page (nur Design geändert) --- */
+/* --- Page --- */
 function CardsPage() {
-  const { name } = useParams<{ name: string }>();
+  // ID-basiert
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
+
   const [loading, setLoading] = useState(true);
   const [cards, setCards] = useState<Card[] | null>(null);
+  const [projectName, setProjectName] = useState<string>("");
 
-  const projectId = useMemo(() => (name ? safeId(name) : ""), [name]);
+  const canLoad = useMemo(() => Boolean(currentUser && id), [currentUser, id]);
 
   useEffect(() => {
-    const fetchCards = async () => {
-      const user = getAuth().currentUser;
-      const uid = user?.uid;
+    let mounted = true;
 
-      if (!uid || !projectId) {
+    const fetchCards = async () => {
+      if (!canLoad) {
         setLoading(false);
         return;
       }
-
       try {
-        const docRef = doc(db, "users", uid, "projects", projectId);
-        const docSnap = await getDoc(docRef);
+        const ref = doc(db, "users", currentUser!.uid, "projects", id!);
+        const snap = await getDoc(ref);
 
-        if (docSnap.exists()) {
-          const data = docSnap.data() as any;
-          setCards(data.cards || []);
+        if (!mounted) return;
+
+        if (snap.exists()) {
+          const data = snap.data() as any;
+          setCards(Array.isArray(data.cards) ? data.cards : []);
+          setProjectName(typeof data.name === "string" ? data.name : id!);
         } else {
           setCards([]);
+          setProjectName(id!);
         }
       } catch (err) {
         console.error("Failed to fetch cards:", err);
-        setCards([]);
+        if (mounted) {
+          setCards([]);
+          setProjectName(id!);
+        }
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
+    setLoading(true);
     fetchCards();
-  }, [projectId]);
+
+    return () => {
+      mounted = false;
+    };
+  }, [canLoad, currentUser, id]);
 
   return (
     <div
@@ -255,7 +197,7 @@ function CardsPage() {
           </button>
 
           <h1 className="mt-4 text-3xl font-extrabold tracking-tight">
-            Study Cards: <span style={{ color: COLORS.PRIMARY }}>{name}</span>
+            Study Cards: <span style={{ color: COLORS.PRIMARY }}>{projectName || "—"}</span>
           </h1>
 
           <div

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useAuth } from "../context/AuthContext";
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -26,8 +27,15 @@ function LoginPage() {
   const [touched, setTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { currentUser } = useAuth();
 
   const navigate = useNavigate();
+
+useEffect(() => {
+  if(currentUser){
+    navigate("/projects", {replace: true})
+  }
+})
 
   const upsertUserDoc = async (u: any) => {
     await setDoc(
@@ -48,22 +56,7 @@ function LoginPage() {
     );
   };
 
-  const handleGoogleLogin = async () => {
-    try {
-      setErrorMsg(null);
-      setSubmitting(true);
-      await setPersistence(auth, browserLocalPersistence);
-      const cred = await signInWithPopup(auth, googleProvider);
-      await upsertUserDoc(cred.user);
-      navigate("/projects", { replace: true });
-    } catch (err: any) {
-      setErrorMsg(err?.message ?? "Google-Anmeldung fehlgeschlagen.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleResetPassword = async () => {
+   const handleResetPassword = async () => {
     try {
       if (!email) {
         setErrorMsg("Gib erst deine E-Mail ein, dann Passwort zurücksetzen.");
@@ -75,6 +68,21 @@ function LoginPage() {
       setErrorMsg("Reset-Link geschickt. Prüfe dein Postfach.");
     } catch (err: any) {
       setErrorMsg(err?.message ?? "Konnte Reset nicht senden.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  
+   const handleGoogleLogin = async () => {
+    try {
+      setErrorMsg(null);
+      setSubmitting(true);
+      await setPersistence(auth, browserLocalPersistence);
+      const cred = await signInWithPopup(auth, googleProvider);
+      await upsertUserDoc(cred.user);
+      // !!! kein navigate hier
+    } catch (err: any) {
+      setErrorMsg(err?.message ?? "Google-Anmeldung fehlgeschlagen.");
     } finally {
       setSubmitting(false);
     }
@@ -97,26 +105,19 @@ function LoginPage() {
     try {
       setSubmitting(true);
       await setPersistence(auth, browserLocalPersistence);
-
       const mail = email.trim().toLowerCase();
 
       if (mode === "login") {
         await signInWithEmailAndPassword(auth, mail, password);
-        navigate("/projects", { replace: true });
-        return;
+        return; // Navigation macht der useEffect
       }
 
-      // signup
       const cred = await createUserWithEmailAndPassword(auth, mail, password);
       if (displayName) {
-        try {
-          await updateProfile(cred.user, { displayName });
-        } catch {
-          /* ignore */
-        }
+        try { await updateProfile(cred.user, { displayName }); } catch {}
       }
       await upsertUserDoc({ ...cred.user, displayName });
-      navigate("/projects", { replace: true });
+      // !!! kein navigate hier
     } catch (err: any) {
       setErrorMsg(err?.message ?? "Aktion fehlgeschlagen.");
     } finally {

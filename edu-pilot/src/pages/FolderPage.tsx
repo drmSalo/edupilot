@@ -26,22 +26,20 @@ interface CardItem { question: string; answer: string; }
 interface Section { heading: string; type: "text" | "list" | "latex"; content: string | string[]; }
 interface Topic { title: string; date: string; sections: Section[]; }
 interface ProjectDoc {
-  name: string; structured?: Topic[]; tokenUsage?: number;
-  isComplex?: boolean; pageCount?: number; createdAt?: any; cards?: CardItem[]; quiz?: QuizItem[];
+  name: string;
+  structured?: Topic[];
+  tokenUsage?: number;
+  isComplex?: boolean;
+  pageCount?: number;
+  createdAt?: any;
+  cards?: CardItem[];
+  quiz?: QuizItem[];
+  modelUsed?: string;
+  initialized?: boolean;
 }
 
-// Safe Firestore document id mirror
-const safeId = (name: string) => {
-  const base = name.trim().toLowerCase();
-  const slug = base
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s-]/g, "").trim()
-    .replace(/\s+/g, "-").replace(/-+/g, "-");
-  return (slug || base.replace(/\W+/g, "-")).slice(0, 120);
-};
-
 export default function FolderPage(): JSX.Element {
-  const { name } = useParams<{ name: string }>();
+  const { id } = useParams<{ id: string }>();         // <-- die echte Doc-ID
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const userPlan = useUserPlan();
@@ -56,7 +54,7 @@ export default function FolderPage(): JSX.Element {
 
   // Modals
   const [isRenameOpen, setIsRenameOpen] = useState(false);
-  const [newName, setNewName] = useState<string>(name || "");
+  const [newName, setNewName] = useState<string>("");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 
   // Notice
@@ -67,35 +65,39 @@ export default function FolderPage(): JSX.Element {
   const abortRef = useRef<AbortController | null>(null);
   const cancelOngoing = () => { abortRef.current?.abort(); abortRef.current = null; };
 
-  const projectId = useMemo(() => (name ? safeId(name) : ""), [name]);
-  const canGenerate = useMemo(() => Boolean(pdfFile && currentUser && name && djangoToken), [pdfFile, currentUser, name, djangoToken]);
+  const canGenerate = useMemo(
+    () => Boolean(pdfFile && currentUser && id && djangoToken),
+    [pdfFile, currentUser, id, djangoToken]
+  );
 
-  // Load project
+  // Projekt laden
   useEffect(() => {
     let mounted = true;
     const load = async () => {
-      if (!currentUser || !name) return;
+      if (!currentUser || !id) return;
       try {
-        const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+        const ref = doc(db, "users", currentUser.uid, "projects", id);
         const snap = await getDoc(ref);
         if (!mounted) return;
-        if (snap.exists()) {
-          const data = snap.data() as ProjectDoc;
-          setProject(data);
-          setCards(data.cards || null);
-          setQuiz(data.quiz || null);
-          setSummaryGenerated(Boolean(data.structured && data.structured.length));
-        } else {
+        if (!snap.exists()) {
           setProject(null); setCards(null); setQuiz(null); setSummaryGenerated(false);
+          setNotice("Projekt nicht gefunden.");
+          return;
         }
+        const data = snap.data() as ProjectDoc;
+        setProject(data);
+        setNewName(data.name ?? "");
+        setCards(data.cards || null);
+        setQuiz(data.quiz || null);
+        setSummaryGenerated(Boolean(data.structured && data.structured.length));
       } catch (e) {
         console.error("Error loading project", e);
-        setNotice("Fehler beim Laden des Projekts.");
+        if (mounted) setNotice("Fehler beim Laden des Projekts.");
       }
     };
     load();
     return () => { mounted = false; cancelOngoing(); };
-  }, [currentUser, name, projectId]);
+  }, [currentUser, id]);
 
   // Handlers
   const onPickFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -119,16 +121,19 @@ export default function FolderPage(): JSX.Element {
 
   const handleGenerate = useCallback(async () => {
     if (!canGenerate) { setNotice("Datei, Nutzer oder Token fehlen."); return; }
+    if (!project?.name) { setNotice("Projektname fehlt."); return; }
+
     setLoading(true); clearNotice(); cancelOngoing();
     const controller = new AbortController(); abortRef.current = controller;
 
     try {
       const extractedText = await uploadPDFAndExtractText(pdfFile!);
       const pageCountGuess = estimatePages(extractedText);
+
       const res = await fetch(`${API_BASE}/api/generate-project/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${djangoToken}` },
-        body: JSON.stringify({ text: extractedText, name, page_count: pageCountGuess }),
+        body: JSON.stringify({ text: extractedText, name: project.name, page_count: pageCountGuess }),
         signal: controller.signal,
       });
       const data = await res.json();
@@ -137,15 +142,24 @@ export default function FolderPage(): JSX.Element {
       setSummaryGenerated(true);
       setProject((prev) => ({
         ...(prev || {}),
-        name: name!, modelUsed: data.model_used, tokenUsage: data.token_usage,
-        isComplex: data.is_complex, pageCount: pageCountGuess, createdAt: new Date(), structured: data.structured,
+        modelUsed: data.model_used,
+        tokenUsage: data.token_usage,
+        isComplex: data.is_complex,
+        pageCount: pageCountGuess,
+        createdAt: new Date(),
+        structured: data.structured,
       }));
 
-      if (currentUser) {
-        const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+      if (currentUser && id) {
+        const ref = doc(db, "users", currentUser.uid, "projects", id);
         await setDoc(ref, {
-          name: name!, modelUsed: data.model_used, tokenUsage: data.token_usage, isComplex: data.is_complex,
-          pageCount: pageCountGuess, createdAt: new Date(), structured: data.structured, initialized: true,
+          modelUsed: data.model_used,
+          tokenUsage: data.token_usage,
+          isComplex: data.is_complex,
+          pageCount: pageCountGuess,
+          createdAt: new Date(),
+          structured: data.structured,
+          initialized: true,
         }, { merge: true });
       }
       setNotice("Zusammenfassung erstellt.");
@@ -153,23 +167,27 @@ export default function FolderPage(): JSX.Element {
       console.error("Generation failed", err);
       setNotice(err?.message || "Fehler bei der Generierung.");
     } finally { setLoading(false); abortRef.current = null; }
-  }, [canGenerate, currentUser, djangoToken, name, pdfFile, projectId]);
+  }, [canGenerate, currentUser, djangoToken, id, pdfFile, project?.name]);
 
   const handleGenerateCards = useCallback(async () => {
     if (userPlan !== "prime") { navigate("/plans"); return; }
-    if (!summaryGenerated || !currentUser || !name) return;
+    if (!summaryGenerated || !currentUser || !id) return;
+    if (!project?.name) { setNotice("Projektname fehlt."); return; }
+
     setLoading(true); clearNotice(); cancelOngoing();
     const controller = new AbortController(); abortRef.current = controller;
     try {
       const res = await fetch(`${API_BASE}/api/generate-study-cards/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${djangoToken}` },
-        body: JSON.stringify({ name }), signal: controller.signal,
+        body: JSON.stringify({ name: project.name }),
+        signal: controller.signal,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to generate cards");
+
       if (currentUser) {
-        const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+        const ref = doc(db, "users", currentUser.uid, "projects", id);
         await setDoc(ref, { ...(project || {}), cards: data.cards }, { merge: true });
       }
       setCards(data.cards);
@@ -178,23 +196,27 @@ export default function FolderPage(): JSX.Element {
       console.error("Card generation failed", err);
       setNotice(err?.message || "Karten konnten nicht erstellt werden.");
     } finally { setLoading(false); abortRef.current = null; }
-  }, [currentUser, djangoToken, name, navigate, project, projectId, summaryGenerated, userPlan]);
+  }, [currentUser, djangoToken, id, navigate, project, summaryGenerated, userPlan]);
 
   const handleGenerateQuiz = useCallback(async () => {
     if (userPlan !== "prime") { navigate("/plans"); return; }
-    if (!summaryGenerated || !currentUser || !name) return;
+    if (!summaryGenerated || !currentUser || !id) return;
+    if (!project?.name) { setNotice("Projektname fehlt."); return; }
+
     setLoading(true); clearNotice(); cancelOngoing();
     const controller = new AbortController(); abortRef.current = controller;
     try {
       const res = await fetch(`${API_BASE}/api/generate-study-quiz/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${djangoToken}` },
-        body: JSON.stringify({ name }), signal: controller.signal,
+        body: JSON.stringify({ name: project.name }),
+        signal: controller.signal,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to generate quiz");
+
       if (currentUser) {
-        const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+        const ref = doc(db, "users", currentUser.uid, "projects", id);
         await setDoc(ref, { ...(project || {}), quiz: data.quiz }, { merge: true });
       }
       setQuiz(data.quiz);
@@ -203,30 +225,26 @@ export default function FolderPage(): JSX.Element {
       console.error("Quiz generation failed", err);
       setNotice(err?.message || "Quiz konnte nicht erstellt werden.");
     } finally { setLoading(false); abortRef.current = null; }
-  }, [currentUser, djangoToken, name, navigate, project, projectId, summaryGenerated, userPlan]);
+  }, [currentUser, djangoToken, id, navigate, project, summaryGenerated, userPlan]);
 
   const handleRename = useCallback(async () => {
-    if (!currentUser || !name || !newName.trim()) return;
+    if (!currentUser || !id || !newName.trim()) return;
     try {
-      const oldRef = doc(db, "users", currentUser.uid, "projects", projectId);
-      const oldSnap = await getDoc(oldRef); if (!oldSnap.exists()) return;
-      const oldData = oldSnap.data() as ProjectDoc;
-      const newId = safeId(newName);
-      const newRef = doc(db, "users", currentUser.uid, "projects", newId);
-      await setDoc(newRef, { ...oldData, name: newName.trim() });
-      await deleteDoc(oldRef);
+      const ref = doc(db, "users", currentUser.uid, "projects", id);
+      await setDoc(ref, { name: newName.trim() }, { merge: true });
       setIsRenameOpen(false);
-      navigate("/projects", { replace: true });
+      setProject((p) => (p ? { ...p, name: newName.trim() } : p));
+      setNotice("Projekt umbenannt.");
     } catch (e) {
       console.error("Rename failed", e);
       setNotice("Umbenennen fehlgeschlagen.");
     }
-  }, [currentUser, name, newName, navigate, projectId]);
+  }, [currentUser, id, newName]);
 
   const handleDelete = useCallback(async () => {
-    if (!currentUser || !name) return;
+    if (!currentUser || !id) return;
     try {
-      const ref = doc(db, "users", currentUser.uid, "projects", projectId);
+      const ref = doc(db, "users", currentUser.uid, "projects", id);
       await deleteDoc(ref);
       setIsDeleteConfirmOpen(false);
       navigate("/projects", { replace: true });
@@ -234,9 +252,9 @@ export default function FolderPage(): JSX.Element {
       console.error("Delete failed", e);
       setNotice("Löschen fehlgeschlagen.");
     }
-  }, [currentUser, name, navigate, projectId]);
+  }, [currentUser, id, navigate]);
 
-  // Buttons (nur Design geändert)
+  // Button
   const ActionButton: React.FC<{
     onClick: () => void; disabled?: boolean; children: React.ReactNode;
     variant?: "primary" | "blue" | "purple";
@@ -251,9 +269,7 @@ export default function FolderPage(): JSX.Element {
     return <button onClick={onClick} disabled={disabled} className={base} style={style}>{children}</button>;
   };
 
-  // ----------------------
-  // Render
-  // ----------------------
+  // ---------------------- Render ----------------------
   return (
     <div
       className="min-h-screen px-4 py-8 sm:px-6 lg:px-8"
@@ -311,11 +327,10 @@ export default function FolderPage(): JSX.Element {
 
           <div className="mt-4">
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Project: <span style={{ color: COLORS.PRIMARY }}>{project?.name || name}</span>
+              Project: <span style={{ color: COLORS.PRIMARY }}>{project?.name ?? "—"}</span>
             </h1>
             {project && (
               <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                
                 {typeof project.tokenUsage === "number" && (
                   <span className="rounded-full px-3 py-1" style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${COLORS.BORDER}` }}>
                     Tokens: {project.tokenUsage}
@@ -330,23 +345,12 @@ export default function FolderPage(): JSX.Element {
             )}
           </div>
 
-          <div
-            aria-hidden
-            className="h-[2px] w-full mt-4 opacity-70"
-            style={{ backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT2}, ${COLORS.ACCENT})` }}
-          />
+          <div aria-hidden className="h-[2px] w-full mt-4 opacity-70" style={{ backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT2}, ${COLORS.ACCENT})` }} />
         </div>
 
         {/* Notice */}
         {notice && (
-          <div
-            className="mb-6 rounded-xl px-4 py-3 text-sm"
-            style={{
-              background: `${COLORS.ACCENT2}22`,
-              border: `1px solid ${COLORS.ACCENT2}55`,
-              color: COLORS.TEXT,
-            }}
-          >
+          <div className="mb-6 rounded-xl px-4 py-3 text-sm" style={{ background: `${COLORS.ACCENT2}22`, border: `1px solid ${COLORS.ACCENT2}55`, color: COLORS.TEXT }}>
             <div className="flex items-start justify-between gap-4">
               <p>{notice}</p>
               <button onClick={clearNotice} className="opacity-80 hover:opacity-100">✕</button>
@@ -382,11 +386,7 @@ export default function FolderPage(): JSX.Element {
               Drag & drop your PDF here or click to select
             </p>
             <input id="file-upload" type="file" accept="application/pdf" onChange={onPickFile} className="hidden" />
-            <label
-              htmlFor="file-upload"
-              className="cursor-pointer text-sm font-semibold underline underline-offset-4"
-              style={{ color: COLORS.PRIMARY }}
-            >
+            <label htmlFor="file-upload" className="cursor-pointer text-sm font-semibold underline underline-offset-4" style={{ color: COLORS.PRIMARY }}>
               Browse file
             </label>
             {pdfFile && (
@@ -427,7 +427,7 @@ export default function FolderPage(): JSX.Element {
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {project?.structured && (
             <div
-              onClick={() => navigate(`/summary/${name}`)}
+              onClick={() => navigate(`/summary/${id}`)}
               className="cursor-pointer rounded-2xl p-6 transition hover:opacity-95"
               style={{
                 background: COLORS.GLASS,
@@ -446,7 +446,7 @@ export default function FolderPage(): JSX.Element {
 
           {cards && (
             <div
-              onClick={() => navigate(`/cards/${name}`)}
+              onClick={() => navigate(`/cards/${id}`)}
               className="cursor-pointer rounded-2xl p-6 transition hover:opacity-95"
               style={{
                 background: COLORS.GLASS,
@@ -465,7 +465,7 @@ export default function FolderPage(): JSX.Element {
 
           {quiz && (
             <div
-              onClick={() => navigate(`/test/${name}`)}
+              onClick={() => navigate(`/test/${id}`)}
               className="cursor-pointer rounded-2xl p-6 transition hover:opacity-95"
               style={{
                 background: COLORS.GLASS,
@@ -486,10 +486,7 @@ export default function FolderPage(): JSX.Element {
         {/* Rename Modal */}
         {isRenameOpen && (
           <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
-            <div
-              className="w-full max-w-sm rounded-2xl p-6"
-              style={{ background: COLORS.GLASS, border: `1px solid ${COLORS.BORDER}`, backdropFilter: "blur(10px)" }}
-            >
+            <div className="w-full max-w-sm rounded-2xl p-6" style={{ background: COLORS.GLASS, border: `1px solid ${COLORS.BORDER}`, backdropFilter: "blur(10px)" }}>
               <h2 className="mb-4 text-lg font-bold">Rename Project</h2>
               <input
                 type="text"
@@ -522,10 +519,7 @@ export default function FolderPage(): JSX.Element {
         {/* Delete Modal */}
         {isDeleteConfirmOpen && (
           <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
-            <div
-              className="w-full max-w-sm rounded-2xl p-6"
-              style={{ background: COLORS.GLASS, border: `1px solid ${COLORS.BORDER}`, backdropFilter: "blur(10px)" }}
-            >
+            <div className="w-full max-w-sm rounded-2xl p-6" style={{ background: COLORS.GLASS, border: `1px solid ${COLORS.BORDER}`, backdropFilter: "blur(10px)" }}>
               <h2 className="mb-3 text-lg font-bold" style={{ color: "#fca5a5" }}>Delete this project?</h2>
               <p className="mb-4" style={{ color: COLORS.SUBTLE }}>This action cannot be undone.</p>
               <div className="flex justify-end gap-2">
