@@ -9,13 +9,13 @@ import {
   sendPasswordResetEmail,
   updateProfile,
 } from "firebase/auth";
-import { auth, googleProvider, db } from "../firebase";
-import { doc, setDoc } from "firebase/firestore";
+import { auth, googleProvider } from "../firebase";
 import { useNavigate } from "react-router-dom";
 import CustomCheckbox from "../components/CustomCheckBox";
 import { FcGoogle } from "react-icons/fc";
 import { FaApple } from "react-icons/fa";
 import { COLORS } from "../customSections/HeroSection";
+import upsertUserDoc from "../context/upsertUserDoc"
 
 function LoginPage() {
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -28,35 +28,13 @@ function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const { currentUser } = useAuth();
-
   const navigate = useNavigate();
 
-useEffect(() => {
-  if(currentUser){
-    navigate("/projects", {replace: true})
-  }
-})
+  useEffect(() => {
+    if (currentUser) navigate("/projects", { replace: true });
+  }, [currentUser, navigate]);
 
-  const upsertUserDoc = async (u: any) => {
-    await setDoc(
-      doc(db, "users", u.uid),
-      {
-        uid: u.uid,
-        email: u.email ?? "",
-        displayName: u.displayName ?? "",
-        name: "",
-        surname: "",
-        age: null,
-        subscription: "basic",
-        projectCount: 0,
-        marketingOptIn: agreeEmails ?? false,
-        createdAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  };
-
-   const handleResetPassword = async () => {
+  const handleResetPassword = async () => {
     try {
       if (!email) {
         setErrorMsg("Gib erst deine E-Mail ein, dann Passwort zurücksetzen.");
@@ -72,15 +50,16 @@ useEffect(() => {
       setSubmitting(false);
     }
   };
-  
-   const handleGoogleLogin = async () => {
+
+  const handleGoogleLogin = async () => {
     try {
       setErrorMsg(null);
       setSubmitting(true);
       await setPersistence(auth, browserLocalPersistence);
       const cred = await signInWithPopup(auth, googleProvider);
-      await upsertUserDoc(cred.user);
-      // !!! kein navigate hier
+      // ✅ ensure Firestore user doc exists/updated
+      await upsertUserDoc(cred.user, agreeEmails);
+      // navigation via useEffect
     } catch (err: any) {
       setErrorMsg(err?.message ?? "Google-Anmeldung fehlgeschlagen.");
     } finally {
@@ -109,15 +88,17 @@ useEffect(() => {
 
       if (mode === "login") {
         await signInWithEmailAndPassword(auth, mail, password);
-        return; // Navigation macht der useEffect
+        return; // navigation via useEffect
       }
 
+      // SIGNUP
       const cred = await createUserWithEmailAndPassword(auth, mail, password);
       if (displayName) {
         try { await updateProfile(cred.user, { displayName }); } catch {}
       }
-      await upsertUserDoc({ ...cred.user, displayName });
-      // !!! kein navigate hier
+      // ✅ create the Firestore user doc on first signup
+      await upsertUserDoc({ ...cred.user, displayName }, agreeEmails);
+      // navigation via useEffect
     } catch (err: any) {
       setErrorMsg(err?.message ?? "Aktion fehlgeschlagen.");
     } finally {
@@ -148,9 +129,7 @@ useEffect(() => {
         >
           <div
             className="absolute inset-0 pointer-events-none"
-            style={{
-              backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}22, ${COLORS.ACCENT2}11)`,
-            }}
+            style={{ backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}22, ${COLORS.ACCENT2}11)` }}
           />
           <div className="p-8">
             <div className="text-3xl font-black tracking-tight">Edu Pilot</div>
@@ -158,7 +137,6 @@ useEffect(() => {
               PDFs rein — strukturierte Summary, Karten & Prüfungsfragen raus.
             </div>
           </div>
-
           <div>
             <video
               src="/loginVideo.mp4"
@@ -170,7 +148,6 @@ useEffect(() => {
               className="w-full h-full object-cover"
             />
           </div>
-
           <div className="p-8">
             <div className="grid grid-cols-3 gap-4">
               {[
@@ -187,10 +164,7 @@ useEffect(() => {
                     backdropFilter: "blur(6px)",
                   }}
                 >
-                  <div
-                    className="text-2xl font-black"
-                    style={{ color: COLORS.PRIMARY }}
-                  >
+                  <div className="text-2xl font-black" style={{ color: COLORS.PRIMARY }}>
                     {s.k}
                   </div>
                   <div className="text-xs" style={{ color: COLORS.SUBTLE }}>
@@ -203,9 +177,7 @@ useEffect(() => {
           <div
             aria-hidden
             className="absolute bottom-0 left-0 right-0 h-[2px]"
-            style={{
-              backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT2}, ${COLORS.ACCENT})`,
-            }}
+            style={{ backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT2}, ${COLORS.ACCENT})` }}
           />
         </div>
 
@@ -219,7 +191,6 @@ useEffect(() => {
             boxShadow: `0 10px 60px -20px rgba(0,0,0,0.7), 0 0 40px 6px ${COLORS.PRIMARY}22`,
           }}
         >
-          {/* Toggle */}
           <div className="flex items-center justify-between mb-8">
             <div className="text-2xl font-extrabold">
               {isSignup ? "Konto erstellen" : "Anmelden"}
@@ -236,24 +207,17 @@ useEffect(() => {
               }}
               type="button"
             >
-              {isSignup
-                ? "Ich habe schon ein Konto"
-                : "Neu hier? Jetzt registrieren"}
+              {isSignup ? "Ich habe schon ein Konto" : "Neu hier? Jetzt registrieren"}
             </button>
           </div>
 
-          {/* Social */}
           <div className="flex flex-col gap-3 mb-6">
             <button
               onClick={handleGoogleLogin}
               type="button"
               disabled={submitting}
               className="flex items-center justify-center gap-3 rounded-xl py-3 font-semibold transition hover:opacity-90"
-              style={{
-                background: "white",
-                color: "#111",
-                border: `1px solid ${COLORS.BORDER}`,
-              }}
+              style={{ background: "white", color: "#111", border: `1px solid ${COLORS.BORDER}` }}
             >
               <FcGoogle size={22} />
               Weiter mit Google
@@ -275,14 +239,10 @@ useEffect(() => {
             </button>
           </div>
 
-          <div
-            className="text-center text-xs mb-6"
-            style={{ color: COLORS.SUBTLE }}
-          >
+          <div className="text-center text-xs mb-6" style={{ color: COLORS.SUBTLE }}>
             oder mit E-Mail fortfahren
           </div>
 
-          {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
             {isSignup && (
               <input
@@ -336,15 +296,13 @@ useEffect(() => {
                     label={
                       <>
                         Mit der Registrierung akzeptierst du unsere{" "}
-                        <span className="underline">Nutzungsbedingungen</span>{" "}
-                        und <span className="underline">Datenschutz</span>.
+                        <span className="underline">Nutzungsbedingungen</span> und{" "}
+                        <span className="underline">Datenschutz</span>.
                       </>
                     }
                   />
                   {touched && !agreeTerms && (
-                    <p className="text-red-400 mt-1 ml-8 text-xs">
-                      Du musst zustimmen.
-                    </p>
+                    <p className="text-red-400 mt-1 ml-8 text-xs">Du musst zustimmen.</p>
                   )}
                 </div>
 
@@ -358,7 +316,6 @@ useEffect(() => {
               </div>
             )}
 
-            {/* Error */}
             {errorMsg && (
               <div
                 className="text-sm rounded-lg p-3"
@@ -382,17 +339,10 @@ useEffect(() => {
                 boxShadow: `0 10px 30px -10px ${COLORS.PRIMARY}aa, 0 0 40px ${COLORS.ACCENT}55`,
               }}
             >
-              {submitting
-                ? isSignup
-                  ? "Registrieren..."
-                  : "Anmelden..."
-                : isSignup
-                ? "Registrieren"
-                : "Anmelden"}
+              {submitting ? (isSignup ? "Registrieren..." : "Anmelden...") : isSignup ? "Registrieren" : "Anmelden"}
             </button>
           </form>
 
-          {/* Footer toggle */}
           <div className="text-center mt-6 text-sm">
             {isSignup ? "Schon ein Konto?" : "Noch kein Konto?"}{" "}
             <button

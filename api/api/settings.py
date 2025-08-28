@@ -17,6 +17,11 @@ DEBUG = True
 ALLOWED_HOSTS = []
 
 
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")                 
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")         
+STRIPE_PRICE_ID_PRIME = os.getenv("STRIPE_PRICE_ID_PRIME")  
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY")   
+
 
 FIREBASE_CERT_PATH = os.path.join(BASE_DIR, "firebase_key.json")
 if not firebase_admin._apps:
@@ -35,9 +40,8 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
 # CORS (if frontend is separate)
@@ -57,10 +61,15 @@ INSTALLED_APPS = [
 
     # Third-party
     'rest_framework',
+    'rest_framework_simplejwt',
     'corsheaders',
 
     # Your apps
-    'api',  # ⬅️ Replace with your real app
+    'api',
+    'authx',
+    'projects',
+    'payment',
+    'user',     # ⬅️ Replace with your real app
 ]
 
 # Middleware

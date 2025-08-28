@@ -27,6 +27,7 @@ import FAQSection from "./customSections/FAQSection";
 import CTASection from "./customSections/CTASection";
 import StatsStrip from "./customSections/StatsStrip";
 import TestPage from "./pages/TestPage";
+import BillingSuccess from "./pages/BillingSuccess";
 
 gsap.registerPlugin(ScrollToPlugin);
 
@@ -169,7 +170,7 @@ function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
-
+            <Route path="/billing/success" element={<BillingSuccess />} />
             <Route
               element={
                 <ProtectedRoute>

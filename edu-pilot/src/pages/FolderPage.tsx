@@ -9,14 +9,20 @@ import React, {
 import { useParams, useNavigate } from "react-router-dom";
 import { FaArrowLeft } from "react-icons/fa";
 import { db } from "../firebase";
-import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  serverTimestamp,
+} from "firebase/firestore";
 import { useAuth } from "../context/AuthContext";
 import { useUserPlan } from "../components/hooks/useUserPlan";
-import { useDjangoToken } from "../components/hooks/useDjangoToken";
-import { uploadPDFAndExtractText } from "../utils/pdfUtils";
+import { useUserAllowances } from "../components/hooks/useUserAllowances";
 import { COLORS } from "../customSections/HeroSection";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+// ⬇️ new: centralized API actions (wired to ApiProvider/ApiClient)
+import { useProjectActions } from "../components/hooks/useProjectAction";
 
 // ----------------------
 // Types
@@ -43,7 +49,6 @@ interface Topic {
 interface ProjectDoc {
   name: string;
   structured?: Topic[];
-  tokenUsage?: number;
   isComplex?: boolean;
   pageCount?: number;
   createdAt?: any;
@@ -51,14 +56,41 @@ interface ProjectDoc {
   quiz?: QuizItem[];
   modelUsed?: string;
   initialized?: boolean;
+
+  // user-level Quota (Snapshot im Projekt)
+  plan?: "prime" | "basic";
+  monthly_limit?: number;
+  uploads_used_this_month?: number;
+  uploads_left_this_month?: number;
+  month?: string;
+
+  // per-project Regens (vom Backend gesetzt)
+  monthlyCardsRegen?: number; // used this month
+  monthlyQuizRegen?: number; // used this month
+  monthlyRegenMonth?: string; // YYYY-MM
 }
 
+type Plan = "prime" | "basic" | null;
+
+// ----------------------
+// Component
+// ----------------------
 export default function FolderPage(): JSX.Element {
-  const { id } = useParams<{ id: string }>(); // <-- die echte Doc-ID
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const userPlan = useUserPlan();
-  const djangoToken = useDjangoToken();
+  const userPlan = useUserPlan() as Plan;
+  const { uploadsLeft } = useUserAllowances(); // optional UI-Hinweis
+
+  // central API actions (no tokens here)
+  const { generateSummary, generateCards, generateQuiz } = useProjectActions();
+
+  const [quota, setQuota] = useState<{
+    monthly_limit: number;
+    uploads_used_this_month: number;
+    uploads_left_this_month: number;
+    month: string;
+  } | null>(null);
 
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [project, setProject] = useState<ProjectDoc | null>(null);
@@ -67,9 +99,16 @@ export default function FolderPage(): JSX.Element {
   const [cards, setCards] = useState<CardItem[] | null>(null);
   const [quiz, setQuiz] = useState<QuizItem[] | null>(null);
 
+  // Per-Project Limits
+  const PROJECT_CARDS_LIMIT = 5;
+  const PROJECT_QUIZ_LIMIT = 5;
+  const [projectCardsLeft, setProjectCardsLeft] = useState<number | null>(null);
+  const [projectQuizLeft, setProjectQuizLeft] = useState<number | null>(null);
+
   // Modals
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [newName, setNewName] = useState<string>("");
+
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 
   // Notice
@@ -83,39 +122,82 @@ export default function FolderPage(): JSX.Element {
     abortRef.current = null;
   };
 
+  // File input ref
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const canGenerate = useMemo(
-    () => Boolean(pdfFile && currentUser && id && djangoToken),
-    [pdfFile, currentUser, id, djangoToken]
+    () => Boolean(pdfFile && currentUser && id),
+    [pdfFile, currentUser, id]
   );
 
+  // ----------------------
   // Projekt laden
+  // ----------------------
   useEffect(() => {
     let mounted = true;
+
     const load = async () => {
       if (!currentUser || !id) return;
       try {
         const ref = doc(db, "users", currentUser.uid, "projects", id);
         const snap = await getDoc(ref);
         if (!mounted) return;
+
         if (!snap.exists()) {
           setProject(null);
           setCards(null);
           setQuiz(null);
           setSummaryGenerated(false);
+          setQuota(null);
+          setProjectCardsLeft(null);
+          setProjectQuizLeft(null);
           setNotice("Projekt nicht gefunden.");
           return;
         }
+
         const data = snap.data() as ProjectDoc;
         setProject(data);
         setNewName(data.name ?? "");
         setCards(data.cards || null);
         setQuiz(data.quiz || null);
         setSummaryGenerated(Boolean(data.structured && data.structured.length));
+
+        // Quota initial
+        if (
+          typeof data.monthly_limit === "number" &&
+          typeof data.uploads_left_this_month === "number"
+        ) {
+          setQuota({
+            monthly_limit: data.monthly_limit!,
+            uploads_used_this_month: data.uploads_used_this_month ?? 0,
+            uploads_left_this_month: data.uploads_left_this_month!,
+            month: data.month ?? "",
+          });
+        } else {
+          setQuota(null);
+        }
+
+        // per-project cards left
+        const usedCards = Number(data.monthlyCardsRegen ?? 0);
+        if (Number.isFinite(usedCards)) {
+          setProjectCardsLeft(Math.max(0, PROJECT_CARDS_LIMIT - usedCards));
+        } else {
+          setProjectCardsLeft(null);
+        }
+
+        // per-project quiz left
+        const usedQuiz = Number(data.monthlyQuizRegen ?? 0);
+        if (Number.isFinite(usedQuiz)) {
+          setProjectQuizLeft(Math.max(0, PROJECT_QUIZ_LIMIT - usedQuiz));
+        } else {
+          setProjectQuizLeft(null);
+        }
       } catch (e) {
         console.error("Error loading project", e);
         if (mounted) setNotice("Fehler beim Laden des Projekts.");
       }
     };
+
     load();
     return () => {
       mounted = false;
@@ -123,7 +205,9 @@ export default function FolderPage(): JSX.Element {
     };
   }, [currentUser, id]);
 
-  // Handlers
+  // ----------------------
+  // File Handlers
+  // ----------------------
   const onPickFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -145,113 +229,20 @@ export default function FolderPage(): JSX.Element {
     setPdfFile(f);
   }, []);
 
-  const estimatePages = (text: string): number => {
-    const byFF = text.split(/\f/g).length;
-    const byGaps = text.split(/\n{3,}/g).length;
-    const byChars = Math.max(1, Math.round(text.length / 3000));
-    return Math.max(1, byFF || byGaps || byChars);
-  };
-
-  // Neue Funktion statt handleGenerate:
-  const handleGenerateSummary = useCallback(
-    async (variant: "small" | "medium" | "big") => {
-      if (!canGenerate) {
-        setNotice("Datei, Nutzer oder Token fehlen.");
-        return;
-      }
-      if (!project?.name) {
-        setNotice("Projektname fehlt.");
-        return;
-      }
-
-      setLoading(true);
-      clearNotice();
-      cancelOngoing();
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      try {
-        const extractedText = await uploadPDFAndExtractText(pdfFile!);
-        const pageCountGuess = estimatePages(extractedText);
-
-        // Auswahl nach Variante
-        let minPages = 5,
-          maxPages = 10;
-        if (variant === "medium") {
-          minPages = 11;
-          maxPages = 20;
-        }
-        if (variant === "big") {
-          minPages = 25;
-          maxPages = 35;
-        }
-
-        const res = await fetch(`${API_BASE}/api/generate-project/`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${djangoToken}`,
-          },
-          body: JSON.stringify({
-            text: extractedText,
-            name: project.name,
-            page_count: pageCountGuess,
-            summary_variant: variant, 
-            min_pages: minPages,
-            max_pages: maxPages,
-          }),
-          signal: controller.signal,
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || "AI generation failed");
-
-        setSummaryGenerated(true);
-        setProject((prev) => ({
-          ...(prev || {}),
-          modelUsed: data.model_used,
-          tokenUsage: data.token_usage,
-          isComplex: data.is_complex,
-          pageCount: pageCountGuess,
-          createdAt: new Date(),
-          structured: data.structured,
-        }));
-
-        if (currentUser && id) {
-          const ref = doc(db, "users", currentUser.uid, "projects", id);
-          await setDoc(
-            ref,
-            {
-              modelUsed: data.model_used,
-              tokenUsage: data.token_usage,
-              isComplex: data.is_complex,
-              pageCount: pageCountGuess,
-              createdAt: new Date(),
-              structured: data.structured,
-              initialized: true,
-            },
-            { merge: true }
-          );
-        }
-        setNotice(`Zusammenfassung (${variant}) erstellt.`);
-      } catch (err: any) {
-        console.error("Generation failed", err);
-        setNotice(err?.message || "Fehler bei der Generierung.");
-      } finally {
-        setLoading(false);
-        abortRef.current = null;
-      }
-    },
-    [canGenerate, currentUser, djangoToken, id, pdfFile, project?.name]
-  );
-
-  const handleGenerateCards = useCallback(async () => {
-    if (userPlan !== "prime") {
-      navigate("/plans");
+  // ----------------------
+  // Summary (ein Button)
+  // ----------------------
+  const handleGenerateSummary = useCallback(async () => {
+    if (!canGenerate) {
+      setNotice("PDF, Nutzer oder API-Login fehlen.");
       return;
     }
-    if (!summaryGenerated || !currentUser || !id) return;
     if (!project?.name) {
       setNotice("Projektname fehlt.");
+      return;
+    }
+    if (quota && quota.uploads_left_this_month === 0) {
+      setNotice("Monatslimit erreicht. Keine weiteren PDF-Uploads möglich.");
       return;
     }
 
@@ -260,170 +251,301 @@ export default function FolderPage(): JSX.Element {
     cancelOngoing();
     const controller = new AbortController();
     abortRef.current = controller;
+
     try {
-      const res = await fetch(`${API_BASE}/api/generate-study-cards/`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${djangoToken}`,
-        },
-        body: JSON.stringify({ name: project.name }),
+      // zentraler API-Call (keine Header/Token hier)
+      const data = await generateSummary(pdfFile!, project.name, {
         signal: controller.signal,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to generate cards");
+      // erwartete Felder aus der API
+      const pageCountFromServer =
+        typeof data.page_count === "number" ? data.page_count : undefined;
 
-      if (currentUser) {
+      setSummaryGenerated(true);
+      setProject((prev) => ({
+        ...(prev || { name: project.name }),
+        modelUsed: data.model_used,
+        isComplex: data.is_complex,
+        pageCount: pageCountFromServer,
+        createdAt: new Date(),
+        structured: data.structured,
+        plan: data.plan,
+        monthly_limit: data.monthly_limit,
+        uploads_used_this_month: data.uploads_used_this_month,
+        uploads_left_this_month: data.uploads_left_this_month,
+        month: data.month,
+        monthlyCardsRegen:
+          typeof data.project_cards_regen_used_this_month === "number"
+            ? data.project_cards_regen_used_this_month
+            : prev?.monthlyCardsRegen ?? 0,
+        monthlyQuizRegen:
+          typeof data.project_quiz_regen_used_this_month === "number"
+            ? data.project_quiz_regen_used_this_month
+            : prev?.monthlyQuizRegen ?? 0,
+        monthlyRegenMonth:
+          data.project_cards_regen_month ??
+          data.project_quiz_regen_month ??
+          prev?.monthlyRegenMonth,
+      }));
+
+      // Quota (Uploads) aktualisieren
+      if (typeof data.uploads_left_this_month === "number") {
+        setQuota({
+          monthly_limit: data.monthly_limit ?? quota?.monthly_limit ?? 0,
+          uploads_used_this_month:
+            data.uploads_used_this_month ?? quota?.uploads_used_this_month ?? 0,
+          uploads_left_this_month: data.uploads_left_this_month,
+          month: data.month ?? quota?.month ?? "",
+        });
+      }
+
+      // per-project left aktualisieren
+      if (typeof data.project_cards_regen_left_this_month === "number") {
+        setProjectCardsLeft(data.project_cards_regen_left_this_month);
+      }
+      if (typeof data.project_quiz_regen_left_this_month === "number") {
+        setProjectQuizLeft(data.project_quiz_regen_left_this_month);
+      }
+
+      // Persistieren (nur relevante Felder)
+      if (currentUser && id) {
         const ref = doc(db, "users", currentUser.uid, "projects", id);
         await setDoc(
           ref,
-          { ...(project || {}), cards: data.cards },
+          {
+            modelUsed: data.model_used,
+            isComplex: data.is_complex,
+            pageCount: pageCountFromServer,
+            createdAt: serverTimestamp(),
+            structured: data.structured,
+            initialized: true,
+
+            // Quota Snapshot
+            plan: data.plan,
+            monthly_limit: data.monthly_limit,
+            uploads_used_this_month: data.uploads_used_this_month,
+            uploads_left_this_month: data.uploads_left_this_month,
+            month: data.month,
+
+            // Project-Regens
+            ...(typeof data.project_cards_regen_used_this_month ===
+              "number" && {
+              monthlyCardsRegen: data.project_cards_regen_used_this_month,
+            }),
+            ...(typeof data.project_quiz_regen_used_this_month === "number" && {
+              monthlyQuizRegen: data.project_quiz_regen_used_this_month,
+            }),
+            ...(typeof data.project_cards_regen_month === "string"
+              ? { monthlyRegenMonth: data.project_cards_regen_month }
+              : typeof data.project_quiz_regen_month === "string"
+              ? { monthlyRegenMonth: data.project_quiz_regen_month }
+              : {}),
+          },
           { merge: true }
         );
       }
+
+      setNotice("Zusammenfassung erstellt.");
+    } catch (err: any) {
+      const msg = String(err?.message || "");
+      if (msg.includes("413")) setNotice("Datei zu groß (413). Bitte kürzen.");
+      else if (msg.includes("415"))
+        setNotice("Dateityp nicht unterstützt (415).");
+      else if (msg.includes("401"))
+        setNotice("Login/Token abgelaufen (401). Bitte neu anmelden.");
+      else if (msg.includes("429"))
+        setNotice("Zu viele Anfragen (429). Kurz warten.");
+      else setNotice(msg || "Unerwarteter Fehler.");
+      console.error("Generation failed", err);
+    } finally {
+      setLoading(false);
+      abortRef.current = null;
+    }
+  }, [
+    canGenerate,
+    currentUser,
+    generateSummary,
+    id,
+    pdfFile,
+    project?.name,
+    quota,
+  ]);
+
+  // ----------------------
+  // Cards
+  // ----------------------
+  const handleGenerateCards = useCallback(async () => {
+    cancelOngoing();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setLoading(true);
+    clearNotice();
+
+    try {
+      if (!summaryGenerated || !currentUser || !id) {
+        throw new Error(
+          "Zusammenfassung fehlt oder Benutzer/Projekt unbekannt."
+        );
+      }
+      if (!project?.name) throw new Error("Projektname fehlt.");
+      if (projectCardsLeft === 0) {
+        throw new Error(
+          `Dieses Projekt hat das monatliche Karten-Regen-Limit (${PROJECT_CARDS_LIMIT}) erreicht.`
+        );
+      }
+
+      const data = await generateCards(project.name, {
+        signal: controller.signal,
+      });
+
+      // Persist: nur relevante Felder
+      const ref = doc(db, "users", currentUser.uid, "projects", id);
+      await setDoc(
+        ref,
+        {
+          cards: data.cards,
+          ...(typeof data.project_cards_regen_used_this_month === "number" && {
+            monthlyCardsRegen: data.project_cards_regen_used_this_month,
+          }),
+          ...(typeof data.project_cards_regen_month === "string" && {
+            monthlyRegenMonth: data.project_cards_regen_month,
+          }),
+        },
+        { merge: true }
+      );
+
       setCards(data.cards);
+
+      // Quota (uploads) übernehmen
+      if (typeof data.uploads_left_this_month === "number") {
+        setQuota({
+          monthly_limit: data.monthly_limit ?? quota?.monthly_limit ?? 0,
+          uploads_used_this_month:
+            data.uploads_used_this_month ?? quota?.uploads_used_this_month ?? 0,
+          uploads_left_this_month: data.uploads_left_this_month,
+          month: data.month ?? quota?.month ?? "",
+        });
+      }
+
+      // Project-cards-left
+      if (typeof data.project_cards_regen_left_this_month === "number") {
+        setProjectCardsLeft(data.project_cards_regen_left_this_month);
+      } else if (projectCardsLeft !== null) {
+        setProjectCardsLeft(Math.max(0, projectCardsLeft - 1));
+      }
+
       setNotice("Karten erstellt.");
     } catch (err: any) {
+      const msg = String(err?.message || "");
+      if (msg.includes("subscription_required") || msg.includes("Prime")) {
+        navigate("/plans");
+      } else {
+        setNotice(msg || "Karten konnten nicht erstellt werden.");
+      }
       console.error("Card generation failed", err);
-      setNotice(err?.message || "Karten konnten nicht erstellt werden.");
     } finally {
       setLoading(false);
       abortRef.current = null;
     }
   }, [
     currentUser,
-    djangoToken,
     id,
     navigate,
     project,
+    projectCardsLeft,
     summaryGenerated,
-    userPlan,
+    quota,
+    generateCards,
   ]);
 
+  // ----------------------
+  // Quiz
+  // ----------------------
   const handleGenerateQuiz = useCallback(async () => {
-    if (userPlan !== "prime") {
-      navigate("/plans");
-      return;
-    }
-    if (!summaryGenerated || !currentUser || !id) return;
-    if (!project?.name) {
-      setNotice("Projektname fehlt.");
-      return;
-    }
-
-    setLoading(true);
-    clearNotice();
     cancelOngoing();
     const controller = new AbortController();
     abortRef.current = controller;
-    try {
-      const res = await fetch(`${API_BASE}/api/generate-study-quiz/`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${djangoToken}`,
-        },
-        body: JSON.stringify({ name: project.name }),
-        signal: controller.signal,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Failed to generate quiz");
 
-      if (currentUser) {
-        const ref = doc(db, "users", currentUser.uid, "projects", id);
-        await setDoc(
-          ref,
-          { ...(project || {}), quiz: data.quiz },
-          { merge: true }
+    setLoading(true);
+    clearNotice();
+
+    try {
+      if (!summaryGenerated || !currentUser || !id) {
+        throw new Error(
+          "Zusammenfassung fehlt oder Benutzer/Projekt unbekannt."
         );
       }
+      if (!project?.name) throw new Error("Projektname fehlt.");
+      if (projectQuizLeft === 0) {
+        throw new Error(
+          `Dieses Projekt hat das monatliche Quiz-Regen-Limit (${PROJECT_QUIZ_LIMIT}) erreicht.`
+        );
+      }
+
+      const data = await generateQuiz(project.name, {
+        signal: controller.signal,
+      });
+
+      // Persist: nur relevante Felder
+      const ref = doc(db, "users", currentUser.uid, "projects", id);
+      await setDoc(
+        ref,
+        {
+          quiz: data.quiz,
+          ...(typeof data.project_quiz_regen_used_this_month === "number" && {
+            monthlyQuizRegen: data.project_quiz_regen_used_this_month,
+          }),
+          ...(typeof data.project_quiz_regen_month === "string" && {
+            monthlyRegenMonth: data.project_quiz_regen_month,
+          }),
+        },
+        { merge: true }
+      );
+
       setQuiz(data.quiz);
+
+      // Quota übernehmen
+      if (typeof data.uploads_left_this_month === "number") {
+        setQuota({
+          monthly_limit: data.monthly_limit ?? quota?.monthly_limit ?? 0,
+          uploads_used_this_month:
+            data.uploads_used_this_month ?? quota?.uploads_used_this_month ?? 0,
+          uploads_left_this_month: data.uploads_left_this_month,
+          month: data.month ?? quota?.month ?? "",
+        });
+      }
+
+      // Project-quiz-left
+      if (typeof data.project_quiz_regen_left_this_month === "number") {
+        setProjectQuizLeft(data.project_quiz_regen_left_this_month);
+      } else if (projectQuizLeft !== null) {
+        setProjectQuizLeft(Math.max(0, projectQuizLeft - 1));
+      }
+
       setNotice("Quiz erstellt.");
     } catch (err: any) {
+      const msg = String(err?.message || "");
+      if (msg.includes("subscription_required") || msg.includes("Prime")) {
+        navigate("/plans");
+      } else {
+        setNotice(msg || "Quiz konnte nicht erstellt werden.");
+      }
       console.error("Quiz generation failed", err);
-      setNotice(err?.message || "Quiz konnte nicht erstellt werden.");
     } finally {
       setLoading(false);
       abortRef.current = null;
     }
   }, [
     currentUser,
-    djangoToken,
     id,
     navigate,
     project,
     summaryGenerated,
-    userPlan,
+    projectQuizLeft,
+    quota,
+    generateQuiz,
   ]);
-
-  const handleRename = useCallback(async () => {
-    if (!currentUser || !id || !newName.trim()) return;
-    try {
-      const ref = doc(db, "users", currentUser.uid, "projects", id);
-      await setDoc(ref, { name: newName.trim() }, { merge: true });
-      setIsRenameOpen(false);
-      setProject((p) => (p ? { ...p, name: newName.trim() } : p));
-      setNotice("Projekt umbenannt.");
-    } catch (e) {
-      console.error("Rename failed", e);
-      setNotice("Umbenennen fehlgeschlagen.");
-    }
-  }, [currentUser, id, newName]);
-
-  const handleDelete = useCallback(async () => {
-    if (!currentUser || !id) return;
-    try {
-      const ref = doc(db, "users", currentUser.uid, "projects", id);
-      await deleteDoc(ref);
-      setIsDeleteConfirmOpen(false);
-      navigate("/projects", { replace: true });
-    } catch (e) {
-      console.error("Delete failed", e);
-      setNotice("Löschen fehlgeschlagen.");
-    }
-  }, [currentUser, id, navigate]);
-
-  // Button
-  const ActionButton: React.FC<{
-    onClick: () => void;
-    disabled?: boolean;
-    children: React.ReactNode;
-    variant?: "primary" | "blue" | "purple";
-  }> = ({ onClick, disabled, children, variant = "primary" }) => {
-    const base =
-      "group inline-flex items-center justify-between rounded-xl px-5 py-3 min-h-[64px] text-sm sm:text-base font-bold transition w-full disabled:opacity-60 disabled:cursor-not-allowed";
-    const style: React.CSSProperties =
-      variant === "primary"
-        ? {
-            color: "#00131a",
-            backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT})`,
-            boxShadow: `0 10px 30px -10px ${COLORS.PRIMARY}aa, 0 0 40px ${COLORS.ACCENT}55`,
-            border: "none",
-          }
-        : variant === "blue"
-        ? {
-            background: "linear-gradient(90deg, #2563eb, #1e40af)",
-            color: "#fff",
-            border: "1px solid rgba(255,255,255,0.08)",
-          }
-        : {
-            background: "linear-gradient(90deg, #7c3aed, #5b21b6)",
-            color: "#fff",
-            border: "1px solid rgba(255,255,255,0.08)",
-          };
-    return (
-      <button
-        onClick={() => {
-          void onClick();
-        }}
-        disabled={disabled}
-        className={base}
-        style={style}
-      >
-        {children}
-      </button>
-    );
-  };
 
   // ---------------------- Render ----------------------
   return (
@@ -455,7 +577,7 @@ export default function FolderPage(): JSX.Element {
             >
               <FaArrowLeft style={{ color: COLORS.PRIMARY }} />
               <span className="underline underline-offset-4 decoration-[rgba(255,255,255,0.25)]">
-                Back to Projects
+                Zurück zu Projekten
               </span>
             </button>
 
@@ -470,7 +592,7 @@ export default function FolderPage(): JSX.Element {
                   color: COLORS.TEXT,
                 }}
               >
-                Rename
+                Umbenennen
               </button>
               <button
                 onClick={() => setIsDeleteConfirmOpen(true)}
@@ -481,44 +603,30 @@ export default function FolderPage(): JSX.Element {
                   color: "#fff",
                 }}
               >
-                Delete
+                Löschen
               </button>
             </div>
           </div>
 
           <div className="mt-4">
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Project:{" "}
+              Projekt:{" "}
               <span style={{ color: COLORS.PRIMARY }}>
                 {project?.name ?? "—"}
               </span>
             </h1>
-            {project && (
-              <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                {typeof project.tokenUsage === "number" && (
-                  <span
-                    className="rounded-full px-3 py-1"
-                    style={{
-                      background: "rgba(255,255,255,0.05)",
-                      border: `1px solid ${COLORS.BORDER}`,
-                    }}
-                  >
-                    Tokens: {project.tokenUsage}
-                  </span>
-                )}
-                {project.pageCount && (
-                  <span
-                    className="rounded-full px-3 py-1"
-                    style={{
-                      background: "rgba(255,255,255,0.05)",
-                      border: `1px solid ${COLORS.BORDER}`,
-                    }}
-                  >
-                    Pages: {project.pageCount}
-                  </span>
-                )}
-              </div>
-            )}
+
+            <div className="flex items-center gap-4 text-sm">
+              <span>
+                Verbleibende Uploads: {loading ? "…" : uploadsLeft ?? "—"}
+              </span>
+              {typeof projectCardsLeft === "number" && (
+                <span>Karten-Regens: {loading ? "…" : projectCardsLeft}</span>
+              )}
+              {typeof projectQuizLeft === "number" && (
+                <span>Quiz-Regens: {loading ? "…" : projectQuizLeft}</span>
+              )}
+            </div>
           </div>
 
           <div
@@ -559,10 +667,12 @@ export default function FolderPage(): JSX.Element {
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              (
-                document.getElementById("file-upload") as HTMLInputElement
-              )?.click();
+            // Only trigger when the container itself is focused
+            if (
+              (e.key === "Enter" || e.key === " ") &&
+              e.currentTarget === e.target
+            ) {
+              fileInputRef.current?.click();
             }
           }}
           className="group mb-10 rounded-3xl p-8 text-center outline-none transition"
@@ -590,180 +700,96 @@ export default function FolderPage(): JSX.Element {
               />
             </svg>
             <p className="mb-2 text-sm" style={{ color: COLORS.SUBTLE }}>
-              Drag & drop your PDF here or click to select
+              Ziehe deine PDF hierher oder klicke zum Auswählen
             </p>
+
             <input
+              ref={fileInputRef}
               id="file-upload"
               type="file"
               accept="application/pdf"
               onChange={onPickFile}
               className="hidden"
             />
+
+            {/* Remove the onClick here – htmlFor is enough */}
             <label
               htmlFor="file-upload"
               className="cursor-pointer text-sm font-semibold underline underline-offset-4"
               style={{ color: COLORS.PRIMARY }}
             >
-              Browse file
+              Datei wählen
             </label>
+
             {pdfFile && (
               <p className="mt-3 truncate text-sm" style={{ color: "#86efac" }}>
-                Uploaded: {pdfFile.name}
+                Ausgewählt: {pdfFile.name}
               </p>
             )}
           </div>
         </div>
 
         {/* Actions */}
-
         <div className="mb-10">
-          {!summaryGenerated && (
-            <div
-              className="mx-1 mb-2 text-[11px] uppercase tracking-wide"
-              style={{ color: COLORS.SUBTLE }}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Generate Summary – EIN Button */}
+            <ActionButton
+              onClick={handleGenerateSummary}
+              disabled={
+                loading || !pdfFile || quota?.uploads_left_this_month === 0
+              }
+              variant="primary"
             >
-              Choose your summary depth
-            </div>
-          )}
-
-          {/* Grid: 1 → 2 → 3 Spalten */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {!summaryGenerated && (
-              <>
-                {/* SMALL */}
-                <ActionButton
-                  onClick={() => {
-                    void handleGenerateSummary("small");
-                  }}
-                  disabled={loading || !pdfFile}
-                >
-                  {loading ? (
-                    "Generating..."
-                  ) : (
-                    <div className="flex items-center w-full gap-3">
-                      <div className="flex flex-col text-left leading-tight">
-                        <span className="font-extrabold">Small Summary</span>
-                        <span className="hidden sm:block text-[11px] opacity-90">
-                          Key points • 5–10 pages
-                        </span>
-                      </div>
-                      <span
-                        className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                        style={{
-                          background: "rgba(255,255,255,0.15)",
-                          border: `1px solid ${COLORS.BORDER}`,
-                        }}
-                      >
-                        Fast
-                      </span>
-                    </div>
-                  )}
-                </ActionButton>
-
-                {/* MEDIUM */}
-                <ActionButton
-                  onClick={() => {
-                    void handleGenerateSummary("medium");
-                  }}
-                  disabled={loading || !pdfFile}
-                  variant="blue"
-                >
-                  {loading ? (
-                    "Generating..."
-                  ) : (
-                    <div className="flex items-center w-full gap-3">
-                      <div className="flex flex-col text-left leading-tight">
-                        <span className="font-extrabold">Medium Summary</span>
-                        <span className="hidden sm:block text-[11px] opacity-90">
-                          More context • 11–20 pages
-                        </span>
-                      </div>
-                      <span
-                        className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                        style={{
-                          background: "rgba(255,255,255,0.15)",
-                          border: `1px solid ${COLORS.BORDER}`,
-                        }}
-                      >
-                        Balanced
-                      </span>
-                    </div>
-                  )}
-                </ActionButton>
-
-                {/* BIG */}
-                <ActionButton
-                  onClick={() => {
-                    void handleGenerateSummary("big");
-                  }}
-                  disabled={loading || !pdfFile}
-                  variant="purple"
-                >
-                  {loading ? (
-                    "Generating..."
-                  ) : (
-                    <div className="flex items-center w-full gap-3">
-                      <div className="flex flex-col text-left leading-tight">
-                        <span className="font-extrabold">Big Summary</span>
-                        <span className="hidden sm:block text-[11px] opacity-90">
-                          In-depth • 25–35 pages
-                        </span>
-                      </div>
-                      <span
-                        className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                        style={{
-                          background: "rgba(255,255,255,0.15)",
-                          border: `1px solid ${COLORS.BORDER}`,
-                        }}
-                      >
-                        Detailed
-                      </span>
-                    </div>
-                  )}
-                </ActionButton>
-              </>
-            )}
+              {loading ? "Generiere…" : "Zusammenfassung generieren"}
+            </ActionButton>
 
             {/* Cards */}
             <ActionButton
               onClick={handleGenerateCards}
-              disabled={loading || !summaryGenerated}
+              disabled={
+                loading ||
+                !summaryGenerated ||
+                userPlan !== "prime" ||
+                projectCardsLeft === 0
+              }
               variant="blue"
             >
-              {loading ? (
-                "Generating..."
-              ) : (
-                <div className="flex items-center w-full gap-3">
-                  <div className="flex flex-col text-left leading-tight">
-                    <span className="font-extrabold">Generate Study Cards</span>
-                    <span className="hidden sm:block text-[11px] opacity-90">
-                      Ready for active recall
-                    </span>
-                  </div>
-                </div>
-              )}
+              {loading ? "Generiere…" : "Studienkarten generieren"}
             </ActionButton>
 
-            {/* Test */}
+            {/* Quiz */}
             <ActionButton
               onClick={handleGenerateQuiz}
-              disabled={loading || !summaryGenerated}
+              disabled={
+                loading ||
+                !summaryGenerated ||
+                userPlan !== "prime" ||
+                projectQuizLeft === 0
+              }
               variant="purple"
             >
-              {loading ? (
-                "Generating..."
-              ) : (
-                <div className="flex items-center w-full gap-3">
-                  <div className="flex flex-col text-left leading-tight">
-                    <span className="font-extrabold">Generate Test</span>
-                    <span className="hidden sm:block text-[11px] opacity-90">
-                      MCQs to check mastery
-                    </span>
-                  </div>
-                </div>
-              )}
+              {loading ? "Generiere…" : "Quiz generieren"}
             </ActionButton>
           </div>
+
+          {/* Hinweise */}
+          {quota?.uploads_left_this_month === 0 && !summaryGenerated && (
+            <div className="mt-3 text-xs" style={{ color: "#fca5a5" }}>
+              Monatslimit erreicht. Keine weiteren PDF-Uploads möglich.
+            </div>
+          )}
+          {projectCardsLeft === 0 && summaryGenerated && (
+            <div className="mt-2 text-xs" style={{ color: "#fca5a5" }}>
+              Dieses Projekt hat das monatliche Karten-Regen-Limit (
+              {PROJECT_CARDS_LIMIT}) erreicht.
+            </div>
+          )}
+          {projectQuizLeft === 0 && summaryGenerated && (
+            <div className="mt-2 text-xs" style={{ color: "#fca5a5" }}>
+              Dieses Projekt hat das monatliche Quiz-Regen-Limit (
+              {PROJECT_QUIZ_LIMIT}) erreicht.
+            </div>
+          )}
         </div>
 
         {/* Loading */}
@@ -791,7 +817,7 @@ export default function FolderPage(): JSX.Element {
               />
             </svg>
             <p className="mt-3" style={{ color: COLORS.SUBTLE }}>
-              Please don't close the tab
+              Tab nicht schließen.
             </p>
           </div>
         )}
@@ -813,10 +839,10 @@ export default function FolderPage(): JSX.Element {
                 className="mb-2 text-2xl font-bold"
                 style={{ color: COLORS.PRIMARY }}
               >
-                Summary
+                Zusammenfassung
               </h2>
               <p className="text-sm" style={{ color: COLORS.SUBTLE }}>
-                Your generated summary is ready. Click to view it in full.
+                Deine generierte Zusammenfassung ist bereit. Klicken zum Öffnen.
               </p>
               <div
                 aria-hidden
@@ -843,10 +869,10 @@ export default function FolderPage(): JSX.Element {
                 className="mb-2 text-2xl font-bold"
                 style={{ color: "#60a5fa" }}
               >
-                Study Cards
+                Studienkarten
               </h2>
               <p className="text-sm" style={{ color: COLORS.SUBTLE }}>
-                Your study cards are ready. Click to view them.
+                Karten sind bereit. Klicken zum Öffnen.
               </p>
               <div
                 aria-hidden
@@ -874,10 +900,10 @@ export default function FolderPage(): JSX.Element {
                 className="mb-2 text-2xl font-bold"
                 style={{ color: "#a78bfa" }}
               >
-                Test
+                Quiz
               </h2>
               <p className="text-sm" style={{ color: COLORS.SUBTLE }}>
-                Your quiz/test is ready. Click to view it.
+                Quiz ist bereit. Klicken zum Öffnen.
               </p>
               <div
                 aria-hidden
@@ -902,7 +928,7 @@ export default function FolderPage(): JSX.Element {
                 backdropFilter: "blur(10px)",
               }}
             >
-              <h2 className="mb-4 text-lg font-bold">Rename Project</h2>
+              <h2 className="mb-4 text-lg font-bold">Projekt umbenennen</h2>
               <input
                 type="text"
                 value={newName}
@@ -912,7 +938,7 @@ export default function FolderPage(): JSX.Element {
                   background: "white",
                   border: "1px solid rgba(0,0,0,0.08)",
                 }}
-                placeholder="New project name"
+                placeholder="Neuer Projektname"
               />
               <div className="flex justify-end gap-2">
                 <button
@@ -924,10 +950,34 @@ export default function FolderPage(): JSX.Element {
                     color: COLORS.TEXT,
                   }}
                 >
-                  Cancel
+                  Abbrechen
                 </button>
                 <button
-                  onClick={handleRename}
+                  onClick={async () => {
+                    if (!currentUser || !id || !newName.trim()) return;
+                    try {
+                      const ref = doc(
+                        db,
+                        "users",
+                        currentUser.uid,
+                        "projects",
+                        id
+                      );
+                      await setDoc(
+                        ref,
+                        { name: newName.trim() },
+                        { merge: true }
+                      );
+                      setIsRenameOpen(false);
+                      setProject((p) =>
+                        p ? { ...p, name: newName.trim() } : p
+                      );
+                      setNotice("Projekt umbenannt.");
+                    } catch (e) {
+                      console.error("Rename failed", e);
+                      setNotice("Umbenennen fehlgeschlagen.");
+                    }
+                  }}
                   className="rounded-xl px-4 py-2 text-sm font-bold"
                   style={{
                     color: "#00131a",
@@ -935,7 +985,7 @@ export default function FolderPage(): JSX.Element {
                     border: "none",
                   }}
                 >
-                  Save
+                  Speichern
                 </button>
               </div>
             </div>
@@ -957,10 +1007,10 @@ export default function FolderPage(): JSX.Element {
                 className="mb-3 text-lg font-bold"
                 style={{ color: "#fca5a5" }}
               >
-                Delete this project?
+                Projekt löschen?
               </h2>
               <p className="mb-4" style={{ color: COLORS.SUBTLE }}>
-                This action cannot be undone.
+                Diese Aktion kann nicht rückgängig gemacht werden.
               </p>
               <div className="flex justify-end gap-2">
                 <button
@@ -972,17 +1022,34 @@ export default function FolderPage(): JSX.Element {
                     color: COLORS.TEXT,
                   }}
                 >
-                  Cancel
+                  Abbrechen
                 </button>
                 <button
-                  onClick={handleDelete}
+                  onClick={async () => {
+                    if (!currentUser || !id) return;
+                    try {
+                      const ref = doc(
+                        db,
+                        "users",
+                        currentUser.uid,
+                        "projects",
+                        id
+                      );
+                      await deleteDoc(ref);
+                      setIsDeleteConfirmOpen(false);
+                      navigate("/projects", { replace: true });
+                    } catch (e) {
+                      console.error("Delete failed", e);
+                      setNotice("Löschen fehlgeschlagen.");
+                    }
+                  }}
                   className="rounded-xl px-4 py-2 text-sm font-bold text-white"
                   style={{
                     background: "linear-gradient(90deg, #ef4444, #b91c1c)",
                     border: "1px solid rgba(255,255,255,0.08)",
                   }}
                 >
-                  Delete
+                  Löschen
                 </button>
               </div>
             </div>
@@ -992,3 +1059,47 @@ export default function FolderPage(): JSX.Element {
     </div>
   );
 }
+
+// ----------------------
+// Button
+// ----------------------
+const ActionButton: React.FC<{
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+  variant?: "primary" | "blue" | "purple";
+}> = ({ onClick, disabled, children, variant = "primary" }) => {
+  const base =
+    "group inline-flex items-center justify-between rounded-xl px-5 py-3 min-h-[56px] text-sm sm:text-base font-bold transition w-full disabled:opacity-60 disabled:cursor-not-allowed";
+
+  const style: React.CSSProperties =
+    variant === "primary"
+      ? {
+          color: "#00131a",
+          backgroundImage: `linear-gradient(90deg, ${COLORS.PRIMARY}, ${COLORS.ACCENT})`,
+          boxShadow: `0 10px 30px -10px ${COLORS.PRIMARY}aa, 0 0 40px ${COLORS.ACCENT}55`,
+          border: "none",
+        }
+      : variant === "blue"
+      ? {
+          background: "linear-gradient(90deg, #2563eb, #1e40af)",
+          color: "#fff",
+          border: "1px solid rgba(255,255,255,0.08)",
+        }
+      : {
+          background: "linear-gradient(90deg, #7c3aed, #5b21b6)",
+          color: "#fff",
+          border: "1px solid rgba(255,255,255,0.08)",
+        };
+
+  return (
+    <button
+      onClick={() => void onClick()}
+      disabled={disabled}
+      className={base}
+      style={style}
+    >
+      {children}
+    </button>
+  );
+};

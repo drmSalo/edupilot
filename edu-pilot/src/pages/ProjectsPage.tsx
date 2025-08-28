@@ -7,7 +7,7 @@ import React, {
   type JSX,
 } from "react";
 import { useNavigate } from "react-router-dom";
-import { collection, getDocs, query } from "firebase/firestore";
+import { collection, getDocs, query, doc, getDoc } from "firebase/firestore";
 import { FaFolder, FaSpinner } from "react-icons/fa";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -21,6 +21,7 @@ import { useCreateProject } from "../components/hooks/useCreateProject";
 import { useDispatch, useSelector } from "react-redux";
 import { triggerRefresh } from "../context/projectSlice";
 import { COLORS } from "../customSections/HeroSection";
+import { useDjangoToken } from "../components/hooks/useDjangoToken"; // ⬅️ NEW
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -35,11 +36,17 @@ export default function ProjectsPage(): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // NEW: remaining uploads
+  const [uploadsLeft, setUploadsLeft] = useState<number | null>(null);
+
   const { currentUser } = useAuth();
   const navigate = useNavigate();
   const { createProject } = useCreateProject();
-  const dispatch = useDispatch();
+  const dispatch = useDispatch(); // keep only one dispatch
   const refresh = useSelector((state: any) => state.project.refresh);
+
+  // ⬅️ NEW: Django token for calling your backend
+  const { token: djangoToken } = useDjangoToken();
 
   // Refs for animations
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -47,7 +54,7 @@ export default function ProjectsPage(): JSX.Element {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  // Reduced motion
+  // Reduced motion support
   const prefersReducedMotion = useMemo(
     () =>
       typeof window !== "undefined" &&
@@ -56,7 +63,50 @@ export default function ProjectsPage(): JSX.Element {
     []
   );
 
-  // Data load
+  // Helper: resolve user plan from doc (plan | subscription | planStatus)
+  const resolvePlan = (data: any): "prime" | "basic" => {
+    const plan = String(data?.plan || "").toLowerCase();
+    const sub = String(data?.subscription || "").toLowerCase();
+    const status = String(data?.planStatus || "").toLowerCase();
+    if (plan === "prime" || sub === "prime" || status === "active" || status === "trialing") {
+      return "prime";
+    }
+    return "basic";
+  };
+
+  const defaultLimitForPlan = (plan: "prime" | "basic"): number =>
+    plan === "prime" ? 180 : 0;
+
+  const nowMonth = () => new Date().toISOString().slice(0, 7); // YYYY-MM
+
+  // ⬅️ NEW: On return from Stripe (/projects?session_id=...), sync immediately for instant prime
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const sid = url.searchParams.get("session_id");
+    if (!sid || !djangoToken) return;
+
+    (async () => {
+      try {
+        await fetch("/api/stripe/sync-checkout-session", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${djangoToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ session_id: sid }),
+        });
+      } catch (e) {
+        console.error("Stripe sync failed:", e);
+      } finally {
+        // Clean the URL and refresh data so quotas/plan reflect upgrade
+        url.searchParams.delete("session_id");
+        window.history.replaceState({}, "", url.toString());
+        dispatch(triggerRefresh());
+      }
+    })();
+  }, [djangoToken, dispatch]);
+
+  // Load data (projects + quota)
   useEffect(() => {
     let mounted = true;
     const load = async () => {
@@ -65,21 +115,63 @@ export default function ProjectsPage(): JSX.Element {
       try {
         if (!currentUser) {
           setProjects([]);
+          setUploadsLeft(null);
           return;
         }
+
+        // Load projects
         const qRef = query(
           collection(db, "users", currentUser.uid, "projects")
         );
         const snap = await getDocs(qRef);
         if (!mounted) return;
+
         const list: Project[] = snap.docs.map((d) => ({
           id: d.id,
           name: (d.data() as any).name || d.id,
         }));
         setProjects(list);
+
+        // Load remaining uploads from user doc
+        const userRef = doc(db, "users", currentUser.uid);
+        const userSnap = await getDoc(userRef);
+        if (!mounted) return;
+
+        if (userSnap.exists()) {
+          const data = userSnap.data() as any;
+
+          if (typeof data?.uploads_left_this_month === "number") {
+            setUploadsLeft(Math.max(0, data.uploads_left_this_month));
+          } else {
+            const plan = resolvePlan(data);
+            const override =
+              typeof data?.monthlyLimitOverride === "number"
+                ? data.monthlyLimitOverride
+                : undefined;
+
+            const limitFromLimits = Number(data?.limits?.pdfMonthlyLimit ?? NaN);
+            const limit = Number.isFinite(override)
+              ? (override as number)
+              : Number.isFinite(limitFromLimits)
+              ? limitFromLimits
+              : defaultLimitForPlan(plan);
+
+            const storedMonth = String(data?.monthlyUploadsMonth || "");
+            const usedThisMonth =
+              storedMonth === nowMonth() ? Number(data?.monthlyUploads ?? 0) : 0;
+
+            const remaining = Math.max(
+              0,
+              Number(limit) - Math.max(0, usedThisMonth)
+            );
+            setUploadsLeft(remaining);
+          }
+        } else {
+          setUploadsLeft(0);
+        }
       } catch (e: any) {
         console.error("Error loading projects:", e);
-        if (mounted) setError("Fehler beim Laden der Projekte.");
+        if (mounted) setError("Error while loading projects.");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -90,7 +182,7 @@ export default function ProjectsPage(): JSX.Element {
     };
   }, [currentUser, refresh]);
 
-  // Header anim
+  // Header animation
   useEffect(() => {
     if (!rootRef.current || prefersReducedMotion) return;
     const ctx = gsap.context(() => {
@@ -111,7 +203,7 @@ export default function ProjectsPage(): JSX.Element {
     return () => ctx.revert();
   }, [prefersReducedMotion]);
 
-  // Grid & cards anim
+  // Grid & card animation
   useEffect(() => {
     if (loading || prefersReducedMotion) return;
     const ctx = gsap.context(() => {
@@ -170,7 +262,7 @@ export default function ProjectsPage(): JSX.Element {
     }
   };
 
-  // Skeletons
+  // Skeleton loader
   const Skeleton = () => (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 p-6">
       {Array.from({ length: 10 }).map((_, i) => (
@@ -223,8 +315,13 @@ export default function ProjectsPage(): JSX.Element {
                 className="text-xs sm:text-sm mt-1"
                 style={{ color: COLORS.SUBTLE }}
               >
-                Deine PDFs, Karten & Prüfungsfragen auf einen Blick.
+                Your PDFs, flashcards & quizzes at a glance.
               </p>
+              {uploadsLeft !== null && (
+                <p className="text-xs mt-1" style={{ color: COLORS.PRIMARY }}>
+                  Remaining uploads this month: {uploadsLeft}
+                </p>
+              )}
             </div>
             <CustomButton
               text="Create Project"
@@ -264,14 +361,14 @@ export default function ProjectsPage(): JSX.Element {
             </div>
           )}
 
-          {/* Stats strip (leichtes „Füllmaterial“ im Stil der HomePage) */}
+          {/* Stats strip */}
           {!loading && projects.length > 0 && (
             <div className="mx-4 sm:mx-0 my-6 grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
-                { k: projects.length.toString(), v: "Projekte" },
-                { k: "24/7", v: "Bereit" },
-                { k: "∞", v: "Revisionen" },
-                { k: "EU", v: "Datenschutz" },
+                { k: projects.length.toString(), v: "Projects" },
+                { k: "24/7", v: "Available" },
+                { k: "∞", v: "Revisions" },
+                { k: "EU", v: "Data privacy" },
               ].map((s) => (
                 <div
                   key={s.v}
@@ -322,10 +419,10 @@ export default function ProjectsPage(): JSX.Element {
                 }}
               />
               <h3 className="text-xl sm:text-2xl font-bold mb-2">
-                Noch keine Projekte
+                No projects yet
               </h3>
               <p className="text-sm mb-6" style={{ color: COLORS.SUBTLE }}>
-                Erstelle dein erstes Projekt und lade ein PDF hoch.
+                Create your first project and upload a PDF.
               </p>
               <CustomButton
                 text="Create Project"
@@ -342,7 +439,7 @@ export default function ProjectsPage(): JSX.Element {
               />
             </div>
           ) : (
-            // Grid
+            // Projects grid
             <div ref={gridRef} className="p-4 sm:p-6">
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 sm:gap-6">
                 {projects.map((project, idx) => (

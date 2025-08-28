@@ -20,7 +20,7 @@ if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY not set in environment")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-BASIC = "basic"
+
 PRIME = "prime"
 
 # Parallelität konfigurierbar
@@ -60,9 +60,7 @@ def _is_complex_topic_cheap(text: str) -> bool:
 
 
 def choose_model_for_summary(plan: str, text: str, page_count: int) -> str:
-    if plan == BASIC:
-        return "gpt-5-nano-2025-08-07"
-    # PRIME: bei längeren oder komplexen Inhalten das stärkere Modell
+    # Es gibt nur PRIME; plan wird ignoriert.
     if _is_complex_topic_cheap(text):
         return "gpt-5-mini-2025-08-07"
     return "gpt-5-nano-2025-08-07"
