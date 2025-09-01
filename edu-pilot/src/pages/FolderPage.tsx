@@ -573,7 +573,7 @@ export default function FolderPage(): JSX.Element {
             <button
               onClick={() => navigate("/projects")}
               className="inline-flex items-center gap-2 text-sm hover:opacity-90"
-              aria-label="Zurück zu Projekten"
+              aria-label="Back to projects"
             >
               <FaArrowLeft style={{ color: COLORS.PRIMARY }} />
               <span className="underline underline-offset-4 decoration-[rgba(255,255,255,0.25)]">
@@ -592,7 +592,7 @@ export default function FolderPage(): JSX.Element {
                   color: COLORS.TEXT,
                 }}
               >
-                Umbenennen
+                Rename
               </button>
               <button
                 onClick={() => setIsDeleteConfirmOpen(true)}
@@ -603,14 +603,14 @@ export default function FolderPage(): JSX.Element {
                   color: "#fff",
                 }}
               >
-                Löschen
+                Delete
               </button>
             </div>
           </div>
 
           <div className="mt-4">
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Projekt:{" "}
+              Project:{' '} 
               <span style={{ color: COLORS.PRIMARY }}>
                 {project?.name ?? "—"}
               </span>
@@ -618,13 +618,13 @@ export default function FolderPage(): JSX.Element {
 
             <div className="flex items-center gap-4 text-sm">
               <span>
-                Verbleibende Uploads: {loading ? "…" : uploadsLeft ?? "—"}
+                Remaining Uploads: {loading ? "…" : uploadsLeft ?? "—"}
               </span>
               {typeof projectCardsLeft === "number" && (
-                <span>Karten-Regens: {loading ? "…" : projectCardsLeft}</span>
+                <span>Study Cards Regens: {loading ? "…" : projectCardsLeft}</span>
               )}
               {typeof projectQuizLeft === "number" && (
-                <span>Quiz-Regens: {loading ? "…" : projectQuizLeft}</span>
+                <span>Exam Regens: {loading ? "…" : projectQuizLeft}</span>
               )}
             </div>
           </div>
@@ -682,7 +682,7 @@ export default function FolderPage(): JSX.Element {
             backdropFilter: "blur(10px)",
             boxShadow: `0 10px 40px -20px rgba(0,0,0,0.6), inset 0 0 0 1px ${COLORS.BORDER}`,
           }}
-          aria-label="PDF Upload Bereich"
+          aria-label="PDF Upload Area"
         >
           <div className="mx-auto flex max-w-sm flex-col items-center">
             <svg
@@ -700,7 +700,7 @@ export default function FolderPage(): JSX.Element {
               />
             </svg>
             <p className="mb-2 text-sm" style={{ color: COLORS.SUBTLE }}>
-              Ziehe deine PDF hierher oder klicke zum Auswählen
+              Upload your PDF here or click to Choose File
             </p>
 
             <input
@@ -718,12 +718,12 @@ export default function FolderPage(): JSX.Element {
               className="cursor-pointer text-sm font-semibold underline underline-offset-4"
               style={{ color: COLORS.PRIMARY }}
             >
-              Datei wählen
+              Choose File
             </label>
 
             {pdfFile && (
               <p className="mt-3 truncate text-sm" style={{ color: "#86efac" }}>
-                Ausgewählt: {pdfFile.name}
+                Select: {pdfFile.name}
               </p>
             )}
           </div>
@@ -740,7 +740,7 @@ export default function FolderPage(): JSX.Element {
               }
               variant="primary"
             >
-              {loading ? "Generiere…" : "Zusammenfassung generieren"}
+              {loading ? "Generating..." : "Generate Summary"}
             </ActionButton>
 
             {/* Cards */}
@@ -754,7 +754,7 @@ export default function FolderPage(): JSX.Element {
               }
               variant="blue"
             >
-              {loading ? "Generiere…" : "Studienkarten generieren"}
+              {loading ? "Generating..." : "Generate Study Cards"}
             </ActionButton>
 
             {/* Quiz */}
@@ -768,25 +768,25 @@ export default function FolderPage(): JSX.Element {
               }
               variant="purple"
             >
-              {loading ? "Generiere…" : "Quiz generieren"}
+              {loading ? "Generating" : "Generate Exam"}
             </ActionButton>
           </div>
 
           {/* Hinweise */}
           {quota?.uploads_left_this_month === 0 && !summaryGenerated && (
             <div className="mt-3 text-xs" style={{ color: "#fca5a5" }}>
-              Monatslimit erreicht. Keine weiteren PDF-Uploads möglich.
+              Monthly limit reached. No more
             </div>
           )}
           {projectCardsLeft === 0 && summaryGenerated && (
             <div className="mt-2 text-xs" style={{ color: "#fca5a5" }}>
-              Dieses Projekt hat das monatliche Karten-Regen-Limit (
+             This project has reached the monthly card regen limit (
               {PROJECT_CARDS_LIMIT}) erreicht.
             </div>
           )}
           {projectQuizLeft === 0 && summaryGenerated && (
             <div className="mt-2 text-xs" style={{ color: "#fca5a5" }}>
-              Dieses Projekt hat das monatliche Quiz-Regen-Limit (
+              This project has reached the monthly quiz regen limit (
               {PROJECT_QUIZ_LIMIT}) erreicht.
             </div>
           )}
@@ -817,7 +817,7 @@ export default function FolderPage(): JSX.Element {
               />
             </svg>
             <p className="mt-3" style={{ color: COLORS.SUBTLE }}>
-              Tab nicht schließen.
+              Do not close this tab.
             </p>
           </div>
         )}
@@ -839,10 +839,10 @@ export default function FolderPage(): JSX.Element {
                 className="mb-2 text-2xl font-bold"
                 style={{ color: COLORS.PRIMARY }}
               >
-                Zusammenfassung
+                Summary
               </h2>
               <p className="text-sm" style={{ color: COLORS.SUBTLE }}>
-                Deine generierte Zusammenfassung ist bereit. Klicken zum Öffnen.
+                Your generated summary is ready. Click to open.
               </p>
               <div
                 aria-hidden
@@ -869,10 +869,10 @@ export default function FolderPage(): JSX.Element {
                 className="mb-2 text-2xl font-bold"
                 style={{ color: "#60a5fa" }}
               >
-                Studienkarten
+                Study Cards
               </h2>
               <p className="text-sm" style={{ color: COLORS.SUBTLE }}>
-                Karten sind bereit. Klicken zum Öffnen.
+                Cards are ready. Click to open.
               </p>
               <div
                 aria-hidden
@@ -903,7 +903,7 @@ export default function FolderPage(): JSX.Element {
                 Quiz
               </h2>
               <p className="text-sm" style={{ color: COLORS.SUBTLE }}>
-                Quiz ist bereit. Klicken zum Öffnen.
+                Quiz is ready. Click to open.
               </p>
               <div
                 aria-hidden
@@ -928,7 +928,7 @@ export default function FolderPage(): JSX.Element {
                 backdropFilter: "blur(10px)",
               }}
             >
-              <h2 className="mb-4 text-lg font-bold">Projekt umbenennen</h2>
+              <h2 className="mb-4 text-lg font-bold">Rename Project</h2>
               <input
                 type="text"
                 value={newName}
@@ -938,7 +938,7 @@ export default function FolderPage(): JSX.Element {
                   background: "white",
                   border: "1px solid rgba(0,0,0,0.08)",
                 }}
-                placeholder="Neuer Projektname"
+                placeholder="New project name"
               />
               <div className="flex justify-end gap-2">
                 <button
@@ -950,7 +950,7 @@ export default function FolderPage(): JSX.Element {
                     color: COLORS.TEXT,
                   }}
                 >
-                  Abbrechen
+                  Cancel
                 </button>
                 <button
                   onClick={async () => {
@@ -985,7 +985,7 @@ export default function FolderPage(): JSX.Element {
                     border: "none",
                   }}
                 >
-                  Speichern
+                  Save
                 </button>
               </div>
             </div>
@@ -1007,10 +1007,10 @@ export default function FolderPage(): JSX.Element {
                 className="mb-3 text-lg font-bold"
                 style={{ color: "#fca5a5" }}
               >
-                Projekt löschen?
+                Delete project?
               </h2>
               <p className="mb-4" style={{ color: COLORS.SUBTLE }}>
-                Diese Aktion kann nicht rückgängig gemacht werden.
+                This action cannot be undone.
               </p>
               <div className="flex justify-end gap-2">
                 <button
@@ -1022,7 +1022,7 @@ export default function FolderPage(): JSX.Element {
                     color: COLORS.TEXT,
                   }}
                 >
-                  Abbrechen
+                  Cancel
                 </button>
                 <button
                   onClick={async () => {
@@ -1049,7 +1049,7 @@ export default function FolderPage(): JSX.Element {
                     border: "1px solid rgba(255,255,255,0.08)",
                   }}
                 >
-                  Löschen
+                  Delete
                 </button>
               </div>
             </div>

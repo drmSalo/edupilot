@@ -221,7 +221,7 @@ def _chat_json_array(model: str, prompt: str, timeout: float = 45.0):
 def generate_study_cards_json_from_summary(summary, model="gpt-5-nano-2025-08-07", debug: bool = False):
     merged_text = _merge_sections_text(summary)
     prompt = (
-        "Create 5 flashcards as a JSON array of objects with fields 'question' and 'answer'. "
+        "Create 25 flashcards as a JSON array of objects with fields 'question' and 'answer'. "
         "Return ONLY the JSON array.\n\n"
         f"{merged_text}"
     )
@@ -232,7 +232,7 @@ def generate_study_cards_json_from_summary(summary, model="gpt-5-nano-2025-08-07
 def generate_quiz_from_summary(summary, model="gpt-5-nano-2025-08-07", debug: bool = False):
     merged_text = _merge_sections_text(summary)
     prompt = (
-        "Generate 5 multiple choice questions as JSON. Each item has 'question', "
+        "Generate 25 multiple choice questions as JSON. Each item has 'question', "
         "'options' (array of 4 strings), and 'correct_answer' (one of the options). "
         "Return ONLY the JSON array.\n\n"
         f"{merged_text}"

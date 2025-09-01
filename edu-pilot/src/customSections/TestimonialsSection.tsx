@@ -2,14 +2,14 @@ import { COLORS } from "./HeroSection";
 
 export default function TestimonialsSection() {
   const items = [
-    { name: "Lisa – WiInf", text: "Endlich kein Chaos in den Skripten. Karten passen 1:1 zur Prüfung." },
-    { name: "Armin – Maschinenbau", text: "LaTeX sauber, Formeln korrekt. Spart pro Woche mehrere Stunden." },
-    { name: "Mira – Lehramt", text: "Klare Zusammenfassungen, gute Fragen. Lernen wird planbar." },
+    { name: "Lisa – Business Informatics", text: "Finally no chaos in the scripts. Cards match the exam 1:1." },
+    { name: "Armin – Mechanical Engineering", text: "LaTeX clean, formulas correct. Saves several hours per week." },
+    { name: "Mira – Education", text: "Clear summaries, good questions. Learning becomes predictable." },
   ];
   return (
     <section className="py-24" style={{ background: COLORS.BG, color: COLORS.TEXT }}>
       <div className="mx-auto max-w-7xl px-4">
-        <h2 className="text-3xl sm:text-4xl font-bold mb-10">Was Studierende sagen</h2>
+        <h2 className="text-3xl sm:text-4xl font-bold mb-10">What students say</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {items.map((t) => (
             <div key={t.name} className="rounded-2xl p-6"

@@ -2,10 +2,10 @@ import { COLORS } from "./HeroSection";
 
 export default function StatsStrip() {
   const stats = [
-    { k: "150k+", v: "Seiten verarbeitet" },
-    { k: "12k+", v: "Karten generiert" },
-    { k: "98%",  v: "Zufriedenheit" },
-    { k: "24/7", v: "Bereit" },
+    { k: "150k+", v: "Pages processed" },
+    { k: "12k+", v: "Cards generated" },
+    { k: "98%",  v: "Satisfaction" },
+    { k: "24/7", v: "Available" },
   ];
   return (
     <section className="py-16" style={{ background: COLORS.BG, color: COLORS.TEXT }}>

@@ -33,9 +33,9 @@ gsap.registerPlugin(ScrollToPlugin);
 
 /* -------- GSAP Smooth Wheel (global) -------- */
 function useGsapSmoothWheel(opts?: {
-  duration?: number;   // Dauer der Animation
-  ease?: string;       // GSAP Ease
-  multiplier?: number; // Scroll-Strecke pro Rad-Dreh
+  duration?: number;   // animation duration
+  ease?: string;       // GSAP ease
+  multiplier?: number; // scroll distance per wheel notch
 }) {
   useEffect(() => {
     const isTouch =
@@ -43,19 +43,19 @@ function useGsapSmoothWheel(opts?: {
       (navigator as any).maxTouchPoints > 0 ||
       (navigator as any).msMaxTouchPoints > 0;
 
-    if (isTouch) return; // Mobile/Touch: nativ lassen
+    if (isTouch) return; // keep native behavior on mobile/touch
 
     const duration = opts?.duration ?? 0.6;
     const ease = (opts?.ease ?? "power3.out") as any;
     const multiplier = opts?.multiplier ?? 0.9;
 
     const onWheel = (e: WheelEvent) => {
-      // Modifikatoren/Zoom/Horizontal ignorieren
+      // ignore modifiers/zoom/horizontal scroll
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
 
       const target = e.target as HTMLElement | null;
       if (target) {
-        // Native Scroll erlauben in Eingaben/scrollbaren Containern
+        // allow native scroll for inputs/scrollable containers
         if (
           target.closest("input, textarea, select, [contenteditable], [data-native-scroll]") ||
           hasScrollableAncestor(target)
@@ -100,7 +100,7 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(n, max));
 }
 
-/* -------- HomePage bleibt wie gehabt -------- */
+/* -------- HomePage stays as-is -------- */
 export function HomePage() {
   const aboutUsRef = useRef<HTMLDivElement>(null);
   const explanationRef = useRef<HTMLDivElement>(null);
@@ -126,7 +126,7 @@ export function HomePage() {
         <Reveal y={60} delay={0.05}><ExplanationSection /></Reveal>
       </div>
 
-      <Reveal y={60} delay={0.08}><LiteratureSection /></Reveal>
+      <Reveal y={60} delay={0.1}><LiteratureSection /></Reveal>
 
       <Reveal y={60} delay={0.1}><TestimonialsSection /></Reveal>
 
@@ -144,15 +144,15 @@ export function HomePage() {
 }
 
 
-/* -------- App mit Smooth Wheel Hook -------- */
+/* -------- App with Smooth Wheel Hook -------- */
 function App() {
   const { loading } = useAuth();
 
-  // Smooth, langsames Scrollen aktivieren (Desktop)
+  // enable smooth, slower scrolling (desktop)
   useGsapSmoothWheel({
-    duration: 0.65,   // langsamer/smoother
+    duration: 0.65,   // slower/smoother
     ease: "power3.out",
-    multiplier: 0.9,  // Strecke pro Wheel (größer = schneller)
+    multiplier: 0.9,  // distance per wheel (higher = faster)
   });
 
   if (loading) {

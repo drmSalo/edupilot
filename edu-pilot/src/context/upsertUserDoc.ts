@@ -18,12 +18,8 @@ export default async function upsertUserDoc(
       uid: u.uid,
       email: u.email ?? "",
       displayName: u.displayName ?? "",
-      name: "",
-      surname: "",
-      age: null,
 
       // legacy + new fields the backend reads
-      subscription: "basic",
       plan: "basic",
       planStatus: "inactive",
 

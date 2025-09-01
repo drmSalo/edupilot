@@ -13,7 +13,6 @@ import { auth, googleProvider } from "../firebase";
 import { useNavigate } from "react-router-dom";
 import CustomCheckbox from "../components/CustomCheckBox";
 import { FcGoogle } from "react-icons/fc";
-import { FaApple } from "react-icons/fa";
 import { COLORS } from "../customSections/HeroSection";
 import upsertUserDoc from "../context/upsertUserDoc"
 
@@ -37,15 +36,15 @@ function LoginPage() {
   const handleResetPassword = async () => {
     try {
       if (!email) {
-        setErrorMsg("Gib erst deine E-Mail ein, dann Passwort zurücksetzen.");
+        setErrorMsg("Enter your email first, then reset password.");
         return;
       }
       setErrorMsg(null);
       setSubmitting(true);
       await sendPasswordResetEmail(auth, email.trim().toLowerCase());
-      setErrorMsg("Reset-Link geschickt. Prüfe dein Postfach.");
+      setErrorMsg("Reset link sent. Check your inbox.");
     } catch (err: any) {
-      setErrorMsg(err?.message ?? "Konnte Reset nicht senden.");
+      setErrorMsg(err?.message ?? "Could not send reset email.");
     } finally {
       setSubmitting(false);
     }
@@ -61,7 +60,7 @@ function LoginPage() {
       await upsertUserDoc(cred.user, agreeEmails);
       // navigation via useEffect
     } catch (err: any) {
-      setErrorMsg(err?.message ?? "Google-Anmeldung fehlgeschlagen.");
+      setErrorMsg(err?.message ?? "Google login failed.");
     } finally {
       setSubmitting(false);
     }
@@ -73,11 +72,11 @@ function LoginPage() {
     setErrorMsg(null);
 
     if (mode === "signup" && !agreeTerms) {
-      setErrorMsg("Du musst AGB & Datenschutz akzeptieren.");
+      setErrorMsg("You must accept Terms & Privacy.");
       return;
     }
     if (mode === "signup" && password.length < 6) {
-      setErrorMsg("Passwort mindestens 6 Zeichen.");
+      setErrorMsg("Password must be at least 6 characters.");
       return;
     }
 
@@ -100,7 +99,7 @@ function LoginPage() {
       await upsertUserDoc({ ...cred.user, displayName }, agreeEmails);
       // navigation via useEffect
     } catch (err: any) {
-      setErrorMsg(err?.message ?? "Aktion fehlgeschlagen.");
+      setErrorMsg(err?.message ?? "Action failed.");
     } finally {
       setSubmitting(false);
     }
@@ -134,7 +133,7 @@ function LoginPage() {
           <div className="p-8">
             <div className="text-3xl font-black tracking-tight">Edu Pilot</div>
             <div className="mt-2 text-sm" style={{ color: COLORS.SUBTLE }}>
-              PDFs rein — strukturierte Summary, Karten & Prüfungsfragen raus.
+              Upload PDFs — get structured summaries, cards & exam questions.
             </div>
           </div>
           <div>
@@ -151,8 +150,8 @@ function LoginPage() {
           <div className="p-8">
             <div className="grid grid-cols-3 gap-4">
               {[
-                { k: "150k+", v: "Seiten" },
-                { k: "12k+", v: "Karten" },
+                { k: "150k+", v: "Pages" },
+                { k: "12k+", v: "Study Cards" },
                 { k: "98%", v: "Happy" },
               ].map((s) => (
                 <div
@@ -193,7 +192,7 @@ function LoginPage() {
         >
           <div className="flex items-center justify-between mb-8">
             <div className="text-2xl font-extrabold">
-              {isSignup ? "Konto erstellen" : "Anmelden"}
+              {isSignup ? "Create Account" : "Login"}
             </div>
             <button
               className="text-sm font-semibold"
@@ -207,7 +206,7 @@ function LoginPage() {
               }}
               type="button"
             >
-              {isSignup ? "Ich habe schon ein Konto" : "Neu hier? Jetzt registrieren"}
+              {isSignup ? "I already have an account" : "New here? Sign up now"}
             </button>
           </div>
 
@@ -220,23 +219,9 @@ function LoginPage() {
               style={{ background: "white", color: "#111", border: `1px solid ${COLORS.BORDER}` }}
             >
               <FcGoogle size={22} />
-              Weiter mit Google
+              Continue with Google
             </button>
-            <button
-              type="button"
-              disabled
-              className="flex items-center justify-center gap-3 rounded-xl py-3 font-semibold opacity-70 cursor-not-allowed"
-              style={{
-                background: "rgba(255,255,255,0.02)",
-                color: COLORS.TEXT,
-                border: `1px solid ${COLORS.BORDER}`,
-                backdropFilter: "blur(6px)",
-              }}
-              title="Kommt später"
-            >
-              <FaApple size={20} />
-              Weiter mit Apple
-            </button>
+            
           </div>
 
           <div className="text-center text-xs mb-6" style={{ color: COLORS.SUBTLE }}>
@@ -247,7 +232,7 @@ function LoginPage() {
             {isSignup && (
               <input
                 type="text"
-                placeholder="Anzeigename (optional)"
+                placeholder="Display name (optional)"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 className="w-full p-3 rounded-lg text-black bg-white"
@@ -257,7 +242,7 @@ function LoginPage() {
 
             <input
               type="email"
-              placeholder="E-Mail"
+              placeholder="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full p-3 rounded-lg text-black bg-white"
@@ -267,7 +252,7 @@ function LoginPage() {
 
             <input
               type="password"
-              placeholder="Passwort"
+              placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full p-3 rounded-lg text-black bg-white"
@@ -284,7 +269,7 @@ function LoginPage() {
                   className="text-sm font-semibold hover:underline"
                   style={{ color: COLORS.PRIMARY }}
                 >
-                  Passwort vergessen?
+                  Forgot password?
                 </button>
               </div>
             ) : (
@@ -295,14 +280,14 @@ function LoginPage() {
                     onChange={(e) => setAgreeTerms(e.target.checked)}
                     label={
                       <>
-                        Mit der Registrierung akzeptierst du unsere{" "}
-                        <span className="underline">Nutzungsbedingungen</span> und{" "}
-                        <span className="underline">Datenschutz</span>.
+                        By signing up you accept our{" "}
+                        <span className="underline">Terms of Service</span> and{" "}
+                        <span className="underline">Privacy Policy.</span>.
                       </>
                     }
                   />
                   {touched && !agreeTerms && (
-                    <p className="text-red-400 mt-1 ml-8 text-xs">Du musst zustimmen.</p>
+                    <p className="text-red-400 mt-1 ml-8 text-xs">You must agree.</p>
                   )}
                 </div>
 
@@ -310,7 +295,7 @@ function LoginPage() {
                   <CustomCheckbox
                     checked={agreeEmails}
                     onChange={(e) => setAgreeEmails(e.target.checked)}
-                    label="Ich möchte Updates & Angebote erhalten."
+                    label="I want to receive updates & offers."
                   />
                 </div>
               </div>
@@ -339,12 +324,12 @@ function LoginPage() {
                 boxShadow: `0 10px 30px -10px ${COLORS.PRIMARY}aa, 0 0 40px ${COLORS.ACCENT}55`,
               }}
             >
-              {submitting ? (isSignup ? "Registrieren..." : "Anmelden...") : isSignup ? "Registrieren" : "Anmelden"}
+              {submitting ? (isSignup ? "Signing up..." : "Logging in...") : isSignup ? "Sign Up" : "Login"}
             </button>
           </form>
 
           <div className="text-center mt-6 text-sm">
-            {isSignup ? "Schon ein Konto?" : "Noch kein Konto?"}{" "}
+            {isSignup ? "Already have an account?" : "Don’t have an account yet?"}{" "}
             <button
               className="font-semibold hover:underline"
               style={{ color: COLORS.PRIMARY }}
@@ -357,7 +342,7 @@ function LoginPage() {
               }}
               type="button"
             >
-              {isSignup ? "Jetzt anmelden" : "Jetzt registrieren"}
+              {isSignup ? "Login now" : "Sign up now"}
             </button>
           </div>
         </div>
