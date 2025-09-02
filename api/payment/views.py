@@ -98,24 +98,52 @@ def _set_user_plan(
     status_txt: str,
     current_period_end: Optional[int],
     customer_id: Optional[str] = None,
+    reset_counters: bool = False,   # <= neu: expliziter Reset-Schalter
 ):
     ref = _user_ref(uid)
     base_doc = ref.get().to_dict() or {}
-    rollover = _ensure_month_rollover(base_doc)
+    rollover = _ensure_month_rollover(base_doc)  # hält projektweite Regens/Uploads im Monatswechsel sauber
 
     limits = _limits_for(plan)
+    pdf_limit = int(limits["pdfMonthlyLimit"])
+
+    # Monatssnapshot, den dein Frontend verwendet (YYYY-MM)
+    from datetime import datetime
+    now_month = datetime.utcnow().strftime("%Y-%m")
 
     update = {
-        "subscription": plan,           # halte sync: subscription == plan
+        "subscription": plan,
         "plan": plan,
-        "planStatus": status_txt,       # trialing, active, past_due, canceled...
+        "planStatus": status_txt,                   # z.B. active, past_due, canceled
         "stripeSubscriptionId": subscription_id,
-        "limits": limits,
-        "monthlyLimit": limits["pdfMonthlyLimit"],  # falls du das Feld noch nutzt
+        "limits": limits,                           # zentrale Limits weiterhin mitführen
+        "monthlyLimit": pdf_limit,                  # legacy
         **rollover,
+
+        # Frontend-kompatible Snapshot-Felder (lesen deine React-Components)
+        "monthly_limit": pdf_limit,
+        "month": now_month,
     }
+
+    if reset_counters:
+        # Harte Zurücksetzung bei Zahlung/Kauf
+        update.update({
+            # Upload-Kontingent
+            "uploads_used_this_month": 0,
+            "uploads_left_this_month": pdf_limit,
+
+            # Legacy interne Zähler (falls irgendwo noch referenziert)
+            "monthlyUploads": 0,
+            "monthlyUploadsMonth": now_month,
+
+            # Pro-Projekt-Regens (werden monatlich erwartet)
+            "monthlyCardsRegen": 0,
+            "monthlyQuizRegen": 0,
+            "monthlyRegenMonth": now_month,
+        })
+
     if current_period_end:
-        update["planCurrentPeriodEnd"] = firestore.Timestamp.from_seconds(current_period_end)
+        update["planCurrentPeriodEnd"] = firestore.Timestamp.from_seconds(int(current_period_end))
     if customer_id:
         update["stripeCustomerId"] = customer_id
 
