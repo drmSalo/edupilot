@@ -1,4 +1,4 @@
-import { setDoc, doc, serverTimestamp, runTransaction } from "firebase/firestore";
+import { doc, serverTimestamp, runTransaction } from "firebase/firestore";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../firebase";
 

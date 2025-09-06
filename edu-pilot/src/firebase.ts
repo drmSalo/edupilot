@@ -28,27 +28,27 @@ const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 
-// Auth + Persistenz
+// Auth + Persistenz (ohne Top-Level await)
 export const auth = getAuth(app);
-await setPersistence(auth, browserLocalPersistence).catch((err) => {
+setPersistence(auth, browserLocalPersistence).catch((err) => {
   console.error("Failed to set Firebase persistence:", err);
 });
 
-// Google Provider (bessere UX)
+// Google Provider
 export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({
-  prompt: "select_account", // zwingt Kontowahl
-});
+googleProvider.setCustomParameters({ prompt: "select_account" });
 
-// Analytics nur, wenn unterstützt + Browser
+// Analytics nur im Browser, ohne Top-Level await
 export let analytics: Analytics | null = null;
 if (typeof window !== "undefined") {
-  try {
-    if (await analyticsIsSupported()) {
-      analytics = getAnalytics(app);
-    }
-  } catch {
-    // still – keine harten Fehler in SSR/Tests
-    analytics = null;
-  }
+  analyticsIsSupported()
+    .then((ok) => {
+      if (ok) {
+        analytics = getAnalytics(app);
+      }
+    })
+    .catch(() => {
+      // still – keine harten Fehler in SSR/Tests
+      analytics = null;
+    });
 }

@@ -156,7 +156,7 @@ export default function AboutUsSection() {
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {items.map((t, i) => (
+          {items.map((t) => (
             <div
               key={t.title}
               className="about-card relative rounded-xl p-6 will-change-transform"
