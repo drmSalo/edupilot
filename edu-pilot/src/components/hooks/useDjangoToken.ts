@@ -7,6 +7,8 @@ const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 type UseDjangoToken = {
   /** Django access token (SimpleJWT), or null if not signed in or still loading */
   token: string | null;
+  
+  
   /** Firebase user (if signed in) */
   user: User | null;
   /** True while we’re exchanging or re-exchanging tokens */
@@ -42,6 +44,7 @@ export function useDjangoToken(): UseDjangoToken {
   const genRef = useRef(0);
 
   useEffect(() => {
+    console.log(API_BASE);
     const auth = getAuth();
     const unsub = onIdTokenChanged(auth, async (u) => {
       const myGen = ++genRef.current;
