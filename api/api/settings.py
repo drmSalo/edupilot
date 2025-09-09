@@ -14,8 +14,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Firebase Admin SDK Setup
 SECRET_KEY = 'django-insecure-riua-w2ca$pvu-n3+w4x5^@$o5q^w-lu-560&4_ml_yxo_blhq'
 DEBUG = True
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["85.192.63.32","192.168.2.34"]
 
+CORS_ALLOWED_ORIGINS = [
+    "http://85.192.63.32",
+    # ggf. weitere Origins, z.B. http://localhost:5173
+]
+CORS_ALLOW_CREDENTIALS = True  # falls Cookies/Sessions
+CSRF_TRUSTED_ORIGINS = [
+    "http://85.192.63.32"
+]
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")                 
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")         
@@ -44,8 +52,7 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
 
-# CORS (if frontend is separate)
-CORS_ALLOW_ALL_ORIGINS = True
+
 
 
 
@@ -129,6 +136,7 @@ USE_TZ = True
 
 # Static & Media
 STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
