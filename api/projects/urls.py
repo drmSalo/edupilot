@@ -1,9 +1,14 @@
-
 from django.urls import path
+
 from . import views
 
+
 urlpatterns = [
-    path("generate-project/", views.generate_project, name="generate_project"),
-    path("generate-study-cards/", views.generate_study_cards, name="generate_study_cards"),
-    path("generate-study-quiz/", views.generate_study_quiz, name="generate_study_quiz"),
+    path("settings/ollama/", views.ollama_settings),
+    path("ollama/models/", views.ollama_models),
+    path("projects/", views.projects),
+    path("projects/<int:project_id>/", views.project_detail),
+    path("projects/<int:project_id>/summary/", views.project_summary),
+    path("projects/<int:project_id>/cards/", views.project_cards),
+    path("projects/<int:project_id>/quiz/", views.project_quiz),
 ]

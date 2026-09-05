@@ -1,581 +1,191 @@
-# views.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Tuple, List, Dict, Any, Literal, Optional
-
-from django.utils.text import slugify
-from rest_framework import status, serializers
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from firebase_admin import firestore
 import unicodedata
 
-from api.settings import db  # Firestore Admin Client
+import pymupdf
+from django.db import IntegrityError
+from rest_framework import status
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.response import Response
 
-from .ai import (
-    choose_model_for_summary,
-    call_openai_on_chunks,
-    generate_study_cards_json_from_summary,
-    generate_quiz_from_summary,
-)
-from .chunking import split_into_chunks
-
-try:
-    import fitz  # PyMuPDF
-except ImportError:
-    fitz = None
-
-# ---------------------------
-# Plans & Limits
-# ---------------------------
-Plan = Literal["basic", "prime"]
-BASIC: Plan = "basic"
-PRIME: Plan = "prime"
-ALLOWED_PLANS: set[str] = {BASIC, PRIME}
-
-# Userweite Regeln
-PLAN_RULES: Dict[Plan, Dict[str, int]] = {
-    BASIC: {"max_pages": 0, "monthly_limit": 0},
-    PRIME: {"max_pages": 420, "monthly_limit": 180},
-}
-
-# Userweite Monats-Regens (falls noch genutzt)
-REGEN_LIMITS = {"cards": 5, "quiz": 5}
-
-# Projektbezogene Regens → ALL-TIME (nicht mehr monatsbasiert)
-PROJECT_REGEN_LIMITS = {"cards": 5, "quiz": 5}
+from . import ai
+from .models import OllamaSettings, Project
 
 
-# ---------------------------
-# Serializers
-# ---------------------------
-class GenerateProjectIn(serializers.Serializer):
-    text = serializers.CharField(allow_blank=False, trim_whitespace=True)
-    name = serializers.CharField(allow_blank=False, trim_whitespace=True, max_length=120)
-    page_count = serializers.IntegerField(required=False, min_value=0, default=0)
+MAX_PDF_BYTES = 50 * 1024 * 1024
 
 
-class ProjectActionIn(serializers.Serializer):
-    # Für Abwärtskompatibilität: Frontend übergibt den Projektnamen
-    name = serializers.CharField(allow_blank=False, trim_whitespace=True, max_length=120)
-
-
-# ---------------------------
-# Helpers
-# ---------------------------
-def _now_month_str() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m")
-
-
-def _safe_doc_id_from_name(name: str) -> str:
-    slug = slugify(name)
-    if not slug:
-        slug = name.strip().replace(" ", "-").replace("/", "-")
-    return slug[:120] or "project"
-
-
-def _resolve_plan_from_user(data: Dict[str, Any]) -> Plan:
-    """
-    Bevorzugt 'plan', fällt zurück auf 'subscription', dann Status.
-    """
-    plan = (data.get("plan") or "").strip().lower()
-    if plan in ALLOWED_PLANS:
-        return plan  # type: ignore[return-value]
-    sub = (data.get("subscription") or "").strip().lower()
-    if sub in ALLOWED_PLANS:
-        return sub  # type: ignore[return-value]
-    status_txt = (data.get("planStatus") or "").strip().lower()
-    if status_txt in {"active", "trialing"}:
-        return PRIME
-    return BASIC
-
-
-def _reset_user_counters_if_needed(user_data: Dict[str, Any], now_month: str) -> Dict[str, Any]:
-    """
-    Resettet NUR userweite Zähler auf Monatswechsel. Projekt-Regens bleiben ALL-TIME.
-    Setzt dabei Limits-Snapshot gemäß aktuellem Plan/Override.
-    """
-    # Monatliche Uploads
-    if (user_data.get("monthlyUploadsMonth") or "") != now_month:
-        user_data["monthlyUploads"] = 0
-        user_data["monthlyUploadsMonth"] = now_month
-
-    # Userweite Regens (falls weiter genutzt)
-    if (user_data.get("monthlyRegenMonth") or "") != now_month:
-        user_data["monthlyCardsRegen"] = 0
-        user_data["monthlyQuizRegen"] = 0
-        user_data["monthlyRegenMonth"] = now_month
-
-    # Plan → Limits
-    resolved_plan = _resolve_plan_from_user(user_data)
-    rules = PLAN_RULES[resolved_plan]
-
-    limit_override = user_data.get("monthlyLimitOverride")
-    pdf_monthly_limit = (
-        int(limit_override) if isinstance(limit_override, int) else int(rules["monthly_limit"])
-    )
-
-    user_data["limits"] = {
-        "pdfMonthlyLimit": pdf_monthly_limit,
-        "cardsRegenMonthlyLimit": REGEN_LIMITS["cards"],
-        "quizRegenMonthlyLimit": REGEN_LIMITS["quiz"],
+def _project_json(project: Project, include_content: bool = True):
+    data = {
+        "id": project.pk,
+        "name": project.name,
+        "source_filename": project.source_filename,
+        "page_count": project.page_count,
+        "model_used": project.model_used,
+        "has_summary": bool(project.summary),
+        "card_count": len(project.cards or []),
+        "quiz_count": len(project.quiz or []),
+        "created_at": project.created_at.isoformat(),
+        "updated_at": project.updated_at.isoformat(),
     }
-    user_data["monthlyLimit"] = pdf_monthly_limit  # falls Frontend das Feld noch nutzt
-
-    user_data["countersUpdatedAt"] = firestore.SERVER_TIMESTAMP
-    user_data["countersMonth"] = now_month
-    return user_data
+    if include_content:
+        data.update({"summary": project.summary, "cards": project.cards, "quiz": project.quiz})
+    return data
 
 
-def _get_user_plan(uid: str) -> Plan:
-    snap = db.collection("users").document(uid).get()
-    return _resolve_plan_from_user(snap.to_dict() or {})
+def _error(message: str, http_status=status.HTTP_400_BAD_REQUEST):
+    return Response({"error": message}, status=http_status)
 
 
-def _enforce_upload_limits_and_increment(uid: str, page_count: int) -> tuple[Dict[str, Any], Plan, int]:
-    """
-    Transaktion: prüft max_pages / monthly_limit und inkrementiert 'monthlyUploads'.
-    Gibt snapshot-ähnliche Daten + Plan + neue Uploads-Anzahl zurück.
-    """
-    user_ref = db.collection("users").document(uid)
-
-    @firestore.transactional
-    def _txn(transaction, user_ref, page_count):
-        snap = user_ref.get(transaction=transaction)
-        user_data = snap.to_dict() or {}
-
-        user_plan = _resolve_plan_from_user(user_data)
-        rules = PLAN_RULES[user_plan]
-        now_month = _now_month_str()
-
-        user_data = _reset_user_counters_if_needed(user_data, now_month)
-
-        if page_count > rules["max_pages"]:
-            raise PermissionError(
-                f"{user_plan.capitalize()} plan allows max {rules['max_pages']} pages per PDF."
-            )
-
-        uploads = int(user_data.get("monthlyUploads", 0) or 0)
-
-        limit_override = user_data.get("monthlyLimitOverride")
-        monthly_limit = (
-            int(limit_override) if isinstance(limit_override, int) else int(rules["monthly_limit"])
-        )
-
-        if uploads >= monthly_limit:
-            raise PermissionError(
-                f"Upload limit reached for {user_plan.capitalize()} plan ({monthly_limit} PDFs/month)."
-            )
-
-        uploads_after = uploads + 1
-        user_data["monthlyUploads"] = uploads_after
-        user_data["monthlyUploadsUpdatedAt"] = firestore.SERVER_TIMESTAMP
-
-        transaction.set(user_ref, user_data, merge=True)
-        return user_data, user_plan, uploads_after
-
-    transaction = db.transaction()
-    return _txn(transaction, user_ref, page_count)
+def _project(project_id: int):
+    try:
+        return Project.objects.get(pk=project_id)
+    except Project.DoesNotExist:
+        return None
 
 
-def _uploads_left_snapshot(uid: str) -> Dict[str, Any]:
-    """
-    Liefert konsistente userweite Quoten (inkl. Quiz-Kennzahlen).
-    """
-    snap = db.collection("users").document(uid).get()
-    data = snap.to_dict() or {}
-
-    now_month = _now_month_str()
-    data = _reset_user_counters_if_needed(data, now_month)
-
-    plan = _resolve_plan_from_user(data)
-    rules = PLAN_RULES[plan]
-
-    limit_override = data.get("monthlyLimitOverride")
-    monthly_limit = int(limit_override) if isinstance(limit_override, int) else int(rules["monthly_limit"])
-
-    used_uploads = int(data.get("monthlyUploads", 0) or 0)
-    left_uploads = max(0, monthly_limit - used_uploads)
-
-    used_cards = int(data.get("monthlyCardsRegen", 0) or 0)
-    left_cards = max(0, REGEN_LIMITS["cards"] - used_cards)
-
-    used_quiz = int(data.get("monthlyQuizRegen", 0) or 0)
-    left_quiz = max(0, REGEN_LIMITS["quiz"] - used_quiz)
-
-    return {
-        "plan": plan,
-        "monthly_limit": monthly_limit,
-        "uploads_used_this_month": used_uploads,
-        "uploads_left_this_month": left_uploads,
-        "cards_regen_used_this_month": used_cards,
-        "cards_regen_left_this_month": left_cards,
-        "quiz_regen_used_this_month": used_quiz,
-        "quiz_regen_left_this_month": left_quiz,
-        "month": now_month,
-    }
-
-
-def _load_project(uid: str, project_name: str) -> Tuple[firestore.DocumentReference, Dict[str, Any]]:
-    project_id = _safe_doc_id_from_name(project_name)
-    project_ref = db.collection("users").document(uid).collection("projects").document(project_id)
-    snap = project_ref.get()
-    return project_ref, (snap.to_dict() or {})
-
-
-def _flatten_sections(structured: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    flat: List[Dict[str, Any]] = []
-    for topic in structured or []:
-        flat.extend(topic.get("sections", []) or [])
-    return flat
-
-
-# ---------------------------
-# Projekt-Regens (ALL-TIME)
-# ---------------------------
-def _inc_project_cards_regen(uid: str, project_name: str) -> tuple[Dict[str, Any], int, int]:
-    """
-    Erhöht ALL-TIME Karten-Regen (Feldname verbleibt 'monthlyCardsRegen' aus Back-compat).
-    """
-    project_id = _safe_doc_id_from_name(project_name)
-    project_ref = db.collection("users").document(uid).collection("projects").document(project_id)
-
-    @firestore.transactional
-    def _txn(transaction, project_ref):
-        snap = project_ref.get(transaction=transaction)
-        project_data = snap.to_dict() or {}
-
-        used = int(project_data.get("monthlyCardsRegen", 0) or 0)
-        limit_ = PROJECT_REGEN_LIMITS["cards"]
-        if used >= limit_:
-            raise PermissionError(f"Study card regenerations for this project exhausted ({limit_} total).")
-
-        used_after = used + 1
-        project_data["monthlyCardsRegen"] = used_after
-        project_data["monthlyRegenUpdatedAt"] = firestore.SERVER_TIMESTAMP
-
-        transaction.set(project_ref, project_data, merge=True)
-        left_after = max(0, limit_ - used_after)
-        return project_data, used_after, left_after
-
-    transaction = db.transaction()
-    return _txn(transaction, project_ref)
-
-
-def _inc_project_quiz_regen(uid: str, project_name: str) -> tuple[Dict[str, Any], int, int]:
-    """
-    Erhöht ALL-TIME Quiz-Regen (Feldname 'monthlyQuizRegen' aus Back-compat).
-    """
-    project_id = _safe_doc_id_from_name(project_name)
-    project_ref = db.collection("users").document(uid).collection("projects").document(project_id)
-
-    @firestore.transactional
-    def _txn(transaction, project_ref):
-        snap = project_ref.get(transaction=transaction)
-        project_data = snap.to_dict() or {}
-
-        used = int(project_data.get("monthlyQuizRegen", 0) or 0)
-        limit_ = PROJECT_REGEN_LIMITS["quiz"]
-        if used >= limit_:
-            raise PermissionError(f"Quiz regenerations for this project exhausted ({limit_} total).")
-
-        used_after = used + 1
-        project_data["monthlyQuizRegen"] = used_after
-        project_data["monthlyRegenUpdatedAt"] = firestore.SERVER_TIMESTAMP
-
-        transaction.set(project_ref, project_data, merge=True)
-        left_after = max(0, limit_ - used_after)
-        return project_data, used_after, left_after
-
-    transaction = db.transaction()
-    return _txn(transaction, project_ref)
-
-
-# ---------------------------
-# Endpoints
-# ---------------------------
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def generate_project(request):
-    """
-    Erstellt IMMER eine kompakte Zusammenfassung (variant='small').
-    Eingabe: PDF (multipart, Feld 'file') ODER text+name JSON.
-    """
-    uid = request.user.username
-
-    has_file = bool(request.FILES.get("file"))
-    min_pages, max_pages = 5, 10
-    summary_variant = "small"
-
-    page_count = 0
-    name = ""
-    text = ""
-
-    if has_file:
-        if fitz is None:
-            return Response(
-                {"error": "PyMuPDF not installed. Run `pip install pymupdf`"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        pdf_file = request.FILES["file"]
-        name = (request.POST.get("name") or "").strip()
-        if not name:
-            return Response({"error": "Missing name"}, status=status.HTTP_400_BAD_REQUEST)
-
+@api_view(["GET", "PUT"])
+def ollama_settings(request):
+    settings = OllamaSettings.load()
+    if request.method == "PUT":
         try:
-            pdf_bytes = pdf_file.read()
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            page_count = int(doc.page_count or 0)
-            # Für sehr große PDFs: ggf. früh abbrechen (bereits durch Limits geschützt)
-            pages_text = [pg.get_text("text") for pg in doc]
-            doc.close()
-            raw_text = "\n".join(pages_text)
-            text = unicodedata.normalize("NFC", raw_text or "")
-        except Exception as e:
-            return Response({"error": f"PDF extraction failed: {e}"}, status=status.HTTP_502_BAD_GATEWAY)
+            settings.base_url = ai.normalize_base_url(request.data.get("base_url", settings.base_url))
+        except ValueError as exc:
+            return _error(str(exc))
+        if "model" in request.data:
+            settings.model = str(request.data.get("model") or "").strip()[:160]
+        settings.save()
+    return Response({"base_url": settings.base_url, "model": settings.model})
 
-    else:
-        inp = GenerateProjectIn(data=request.data)
-        if not inp.is_valid():
-            return Response({"error": inp.errors}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
-        text = (inp.validated_data["text"] or "").strip()
-        name = (inp.validated_data["name"] or "").strip()
-        page_count = int(inp.validated_data.get("page_count", 0) or 0)
-
-        if not text or not name:
-            return Response({"error": "Missing fields"}, status=status.HTTP_400_BAD_REQUEST)
-
-    # Quotas (userweit)
+@api_view(["GET"])
+def ollama_models(request):
+    settings = OllamaSettings.load()
     try:
-        _user_after, plan, _uploads = _enforce_upload_limits_and_increment(uid, page_count)
-    except PermissionError as pe:
-        return Response({"error": str(pe)}, status=status.HTTP_403_FORBIDDEN)
-    except Exception as e:
-        return Response({"error": f"Quota transaction failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"models": ai.list_models(settings.base_url)})
+    except ai.OllamaError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
 
-    model = choose_model_for_summary(plan=plan, text=text, page_count=page_count)
-    chunks = split_into_chunks(text, max_tokens=2000, model_hint=model)
 
+@api_view(["GET", "POST"])
+@parser_classes([JSONParser])
+def projects(request):
+    if request.method == "GET":
+        return Response([_project_json(item, include_content=False) for item in Project.objects.all()])
+
+    name = str(request.data.get("name") or "").strip()
+    if not name:
+        return _error("Project name is required.")
+    if len(name) > 160:
+        return _error("Project name must be 160 characters or fewer.")
     try:
-        structured_summary, total_tokens = call_openai_on_chunks(
-            chunks,
-            model=model,
-            debug=False,
-            summary_variant=summary_variant,
-            min_pages=min_pages,
-            max_pages=max_pages,
-        )
-    except Exception as e:
-        return Response({"error": f"AI processing failed: {e}"}, status=status.HTTP_502_BAD_GATEWAY)
+        project = Project.objects.create(name=name)
+    except IntegrityError:
+        return _error("A project with this name already exists.", status.HTTP_409_CONFLICT)
+    return Response(_project_json(project), status=status.HTTP_201_CREATED)
 
-    project_ref, existing = _load_project(uid, name)
-    if existing.get("initialized") is True:
-        return Response({"error": "Project already initialized"}, status=status.HTTP_409_CONFLICT)
 
-    project_data = {
-        "name": name,
-        "structured": structured_summary,
-        "modelUsed": model,
-        "isComplex": bool(str(model).endswith("mini-2025-08-07")),
-        "pageCount": int(page_count or 0),
-        "createdAt": firestore.SERVER_TIMESTAMP,
-        "initialized": True,
-        # Projekt-Regens (ALL-TIME)
-        "monthlyCardsRegen": 0,
-        "monthlyQuizRegen": 0,
-    }
-    project_ref.set(project_data, merge=True)
+@api_view(["GET", "PATCH", "DELETE"])
+@parser_classes([JSONParser])
+def project_detail(request, project_id: int):
+    project = _project(project_id)
+    if not project:
+        return _error("Project not found.", status.HTTP_404_NOT_FOUND)
+    if request.method == "DELETE":
+        project.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    if request.method == "PATCH":
+        name = str(request.data.get("name") or "").strip()
+        if not name or len(name) > 160:
+            return _error("Enter a project name of 1 to 160 characters.")
+        project.name = name
+        try:
+            project.save(update_fields=["name", "updated_at"])
+        except IntegrityError:
+            return _error("A project with this name already exists.", status.HTTP_409_CONFLICT)
+    return Response(_project_json(project))
 
-    allowances = _uploads_left_snapshot(uid)
 
-    return Response(
-        {
-            "structured": structured_summary,
-            "model_used": model,
-            "is_complex": bool(project_data["isComplex"]),
-            "page_count": int(page_count or 0),
-            "summary": None,
-            "cards": None,
-            "quiz": None,
-            "summary_pdf_url": None,
-            # Userweite Quoten
-            "plan": allowances["plan"],
-            "monthly_limit": allowances["monthly_limit"],
-            "uploads_used_this_month": allowances["uploads_used_this_month"],
-            "uploads_left_this_month": allowances["uploads_left_this_month"],
-            "cards_regen_used_this_month": allowances["cards_regen_used_this_month"],
-            "cards_regen_left_this_month": allowances["cards_regen_left_this_month"],
-            "quiz_regen_used_this_month": allowances["quiz_regen_used_this_month"],
-            "quiz_regen_left_this_month": allowances["quiz_regen_left_this_month"],
-            "month": allowances["month"],
-            # Projektbezogene Totals (ALL-TIME)
-            "project_cards_regen_used_total": 0,
-            "project_cards_regen_left_total": PROJECT_REGEN_LIMITS["cards"],
-            "project_quiz_regen_used_total": 0,
-            "project_quiz_regen_left_total": PROJECT_REGEN_LIMITS["quiz"],
-            # Back-compat Aliase (identisch)
-            "project_cards_regen_used_this_month": 0,
-            "project_cards_regen_left_this_month": PROJECT_REGEN_LIMITS["cards"],
-            "project_quiz_regen_used_this_month": 0,
-            "project_quiz_regen_left_this_month": PROJECT_REGEN_LIMITS["quiz"],
-            "project_cards_regen_month": "ALL_TIME",
-            "project_quiz_regen_month": "ALL_TIME",
-        },
-        status=status.HTTP_200_OK,
-    )
+def _extract_pdf(upload) -> tuple[str, int]:
+    if upload.size > MAX_PDF_BYTES:
+        raise ValueError("PDF is larger than the 50 MB local upload limit.")
+    if upload.content_type not in {"application/pdf", "application/x-pdf"} and not upload.name.lower().endswith(".pdf"):
+        raise ValueError("Upload a PDF file.")
+    try:
+        content = upload.read()
+        with pymupdf.open(stream=content, filetype="pdf") as document:
+            page_count = document.page_count
+            text = "\n\n".join(page.get_text("text") for page in document)
+    except Exception as exc:
+        raise ValueError("The PDF could not be read. It may be damaged or encrypted.") from exc
+    text = unicodedata.normalize("NFC", text).strip()
+    if not text:
+        raise ValueError("No selectable text was found. Scanned PDFs need OCR before upload.")
+    return text, page_count
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def generate_study_cards(request):
-    uid = request.user.username
-
-    # Paywall (serverseitig – nicht nur UI)
-    if _get_user_plan(uid) != PRIME:
-        return Response(
-            {
-                "error": "Prime subscription required. Please purchase the subscription to use this feature.",
-                "code": "subscription_required",
-                "required_plan": PRIME,
-            },
-            status=status.HTTP_402_PAYMENT_REQUIRED,
-        )
-
-    inp = ProjectActionIn(data=request.data)
-    if not inp.is_valid():
-        return Response({"error": inp.errors}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-
-    project_name = inp.validated_data["name"].strip()
-
-    project_ref, project = _load_project(uid, project_name)
+@parser_classes([MultiPartParser, FormParser])
+def project_summary(request, project_id: int):
+    project = _project(project_id)
     if not project:
-        return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        return _error("Project not found.", status.HTTP_404_NOT_FOUND)
 
-    structured = project.get("structured")
-    if not structured:
-        return Response({"error": "No summary found"}, status=status.HTTP_400_BAD_REQUEST)
+    upload = request.FILES.get("file")
+    if upload:
+        try:
+            project.source_text, project.page_count = _extract_pdf(upload)
+        except ValueError as exc:
+            return _error(str(exc))
+        project.source_filename = upload.name[:255]
+    if not project.source_text:
+        return _error("Choose a PDF before generating a summary.")
 
-    # Projekt-ALL-TIME-Limit prüfen + inkrementieren
+    detail = str(request.data.get("detail") or "balanced")
+    if detail not in {"brief", "balanced", "detailed"}:
+        return _error("Detail must be brief, balanced, or detailed.")
+    settings = OllamaSettings.load()
     try:
-        project_after, used_now, left_now = _inc_project_cards_regen(uid, project_name)
-    except PermissionError as pe:
-        return Response({"error": str(pe)}, status=status.HTTP_403_FORBIDDEN)
-    except Exception as e:
-        return Response({"error": f"Cards quota transaction failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    flat_sections = _flatten_sections(structured)
-    try:
-        model = "gpt-5-mini-2025-08-07"
-        cards = generate_study_cards_json_from_summary(flat_sections, model=model)
-    except Exception as e:
-        return Response({"error": f"Card generation failed: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
-
-    project_ref.update(
-        {
-            "cards": cards,
-            "monthlyCardsRegen": project_after.get("monthlyCardsRegen", used_now),
-            "monthlyRegenUpdatedAt": firestore.SERVER_TIMESTAMP,
-        }
-    )
-
-    allowances = _uploads_left_snapshot(uid)
-    return Response(
-        {
-            "status": "success",
-            "cards": cards,
-            # Userweite Quoten
-            "uploads_left_this_month": allowances["uploads_left_this_month"],
-            "cards_regen_left_this_month": allowances["cards_regen_left_this_month"],
-            "quiz_regen_left_this_month": allowances["quiz_regen_left_this_month"],
-            "month": allowances["month"],
-            # Projektbezogene Totals (ALL-TIME)
-            "project_cards_regen_used_total": int(project_after.get("monthlyCardsRegen", used_now)),
-            "project_cards_regen_left_total": int(left_now),
-            "project_cards_regen_monthly_limit_total": PROJECT_REGEN_LIMITS["cards"],
-            # Back-compat Aliase
-            "project_cards_regen_used_this_month": int(project_after.get("monthlyCardsRegen", used_now)),
-            "project_cards_regen_left_this_month": int(left_now),
-            "project_cards_regen_month": "ALL_TIME",
-        },
-        status=status.HTTP_200_OK,
-    )
+        project.summary = ai.summarize(settings.base_url, settings.model, project.source_text, detail)
+    except ai.OllamaError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+    project.model_used = settings.model
+    project.cards = []
+    project.quiz = []
+    project.save()
+    return Response(_project_json(project))
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def generate_study_quiz(request):
-    uid = request.user.username
-
-    # Paywall
-    if _get_user_plan(uid) != PRIME:
-        return Response(
-            {
-                "error": "Prime subscription required. Please purchase the subscription to use this feature.",
-                "code": "subscription_required",
-                "required_plan": PRIME,
-            },
-            status=status.HTTP_402_PAYMENT_REQUIRED,
-        )
-
-    inp = ProjectActionIn(data=request.data)
-    if not inp.is_valid():
-        return Response({"error": inp.errors}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-
-    project_name = inp.validated_data["name"].strip()
-
-    project_ref, project = _load_project(uid, project_name)
+def project_cards(request, project_id: int):
+    project = _project(project_id)
     if not project:
-        return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    structured = project.get("structured")
-    if not structured:
-        return Response({"error": "No summary found"}, status=status.HTTP_400_BAD_REQUEST)
-
-    # Projekt-ALL-TIME-Limit prüfen + inkrementieren
+        return _error("Project not found.", status.HTTP_404_NOT_FOUND)
+    if not project.summary:
+        return _error("Generate a summary first.")
+    settings = OllamaSettings.load()
     try:
-        project_after, used_now, left_now = _inc_project_quiz_regen(uid, project_name)
-    except PermissionError as pe:
-        return Response({"error": str(pe)}, status=status.HTTP_403_FORBIDDEN)
-    except Exception as e:
-        return Response({"error": f"Quiz quota transaction failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        project.cards = ai.make_cards(settings.base_url, settings.model, project.summary)
+    except ai.OllamaError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+    project.model_used = settings.model
+    project.save(update_fields=["cards", "model_used", "updated_at"])
+    return Response({"cards": project.cards, "model_used": project.model_used})
 
-    flat_sections = _flatten_sections(structured)
+
+@api_view(["POST"])
+def project_quiz(request, project_id: int):
+    project = _project(project_id)
+    if not project:
+        return _error("Project not found.", status.HTTP_404_NOT_FOUND)
+    if not project.summary:
+        return _error("Generate a summary first.")
+    settings = OllamaSettings.load()
     try:
-        model = "gpt-5-mini-2025-08-07"
-        quiz = generate_quiz_from_summary(flat_sections, model=model)
-    except Exception as e:
-        return Response({"error": f"Quiz generation failed: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
-
-    project_ref.update(
-        {
-            "quiz": quiz,
-            "monthlyQuizRegen": project_after.get("monthlyQuizRegen", used_now),
-            "monthlyRegenUpdatedAt": firestore.SERVER_TIMESTAMP,
-        }
-    )
-
-    allowances = _uploads_left_snapshot(uid)
-    return Response(
-        {
-            "status": "success",
-            "quiz": quiz,
-            # Userweite Quoten
-            "uploads_left_this_month": allowances["uploads_left_this_month"],
-            "cards_regen_left_this_month": allowances["cards_regen_left_this_month"],
-            "quiz_regen_left_this_month": allowances["quiz_regen_left_this_month"],
-            "month": allowances["month"],
-            # Projektbezogene Totals (ALL-TIME)
-            "project_quiz_regen_used_total": int(project_after.get("monthlyQuizRegen", used_now)),
-            "project_quiz_regen_left_total": int(left_now),
-            "project_quiz_regen_monthly_limit_total": PROJECT_REGEN_LIMITS["quiz"],
-            # Back-compat Aliase
-            "project_quiz_regen_used_this_month": int(project_after.get("monthlyQuizRegen", used_now)),
-            "project_quiz_regen_left_this_month": int(left_now),
-            "project_quiz_regen_month": "ALL_TIME",
-        },
-        status=status.HTTP_200_OK,
-    )
+        project.quiz = ai.make_quiz(settings.base_url, settings.model, project.summary)
+    except ai.OllamaError as exc:
+        return _error(str(exc), status.HTTP_502_BAD_GATEWAY)
+    project.model_used = settings.model
+    project.save(update_fields=["quiz", "model_used", "updated_at"])
+    return Response({"quiz": project.quiz, "model_used": project.model_used})
